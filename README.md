@@ -106,6 +106,7 @@ https://cdn.jsdelivr.net/gh/sessionhive/dsh-collab@main/market/index.json
 | [DSH 引擎与插件](docs/engine-and-plugins.md) | 引擎目录约定、托管启动、dsh-collab 安装与验证 |
 | [Agent 一键部署](docs/agent-setup.md) | 给 AI Agent 的端到端执行清单与 PowerShell 脚本 |
 | [项目结构](docs/architecture.md) | 进程模型、模块系统、IPC、存档与安全边界 |
+| [更新日志](CHANGELOG.md) | 版本变更、依赖与已知限制 |
 
 场景桌面示例：
 
