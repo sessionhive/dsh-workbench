@@ -1,6 +1,6 @@
 # Agent 一键部署
 
-这是一份给 AI Agent 执行的操作说明。目标是在一台 Windows 机器上，从空目录开始，把 DSH 中枢工作台跑起来，装上 dsh-collab，并完成可验证的验收。
+这是一份给 AI Agent 执行的操作说明。目标是在一台 Windows 机器上，从空目录开始，把 DSH 中枢工作台跑起来，装上 dsh-collab（npm 包 `@sessionhive/dsh-collab`，仓库 <https://github.com/sessionhive/dsh-collab>），并完成可验证的验收。
 
 > 如果你是把任务交给另一个 Agent，直接把下面这段话连同本文件一起发给它：
 >
@@ -12,7 +12,7 @@
 
 - 工作台仓库在 `-AppDir` 指定的目录，依赖已安装，`dist/` 已构建。
 - DSH 引擎能被工作台托管拉起，端口 `-Port`（默认 `3083`）可访问。
-- dsh-collab 已装进正确的 DSH profile，并在 `cordis.patch.yml` 登记。
+- dsh-collab（<https://github.com/sessionhive/dsh-collab>，npm 包 `@sessionhive/dsh-collab`）已装进正确的 DSH profile，并在 `cordis.patch.yml` 登记。
 - 引擎重启后，工作台状态栏显示「DSH 引擎已连接」。
 - 工作台「设置 → 体检 → 核心插件」没有 fail；DSH 侧自检通过。
 
@@ -222,6 +222,8 @@ if ($ProfileDir) {
 Write-Host "ProfileDir = $ProfileDir"
 
 # ---------- 5. 安装 dsh-collab ----------
+# 插件必须来自 https://github.com/sessionhive/dsh-collab
+# npm 包：@sessionhive/dsh-collab。不要安装名称相近的其他包。
 Write-Step '安装 @sessionhive/dsh-collab'
 $pluginVersion = '0.1.1'
 $pluginDir = Join-Path $ProfileDir 'node_modules\@sessionhive\dsh-collab'

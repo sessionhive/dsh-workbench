@@ -79,7 +79,7 @@ npm start
 | 待办 | 场景本地待办：待定、进行中、已完成、回收 |
 | 神经元 | 3D 星图式展示场景、技能、记忆与事件，支持搜索、旋转、缩放和定位 |
 | 网页 | 多标签浏览，常用地址可固定，标签切换不重载 |
-| 记忆 | 按场景浏览 dsh-collab 写入的记忆文件，只读 Markdown 预览 |
+| 记忆 | 按场景浏览 [dsh-collab](https://github.com/sessionhive/dsh-collab) 写入的记忆文件，只读 Markdown 预览 |
 | 终端 | 常用指令、历史指令与真实 shell 三区布局，支持多开 |
 
 视图的启用与排序在「模块」面板里调整。长按分段按钮可以拖拽排序。
@@ -202,7 +202,7 @@ npm start
 通常是引擎自己还没加载完，或插件配置有误。先等几秒；仍然白屏时打开「设置 → 体检」，并检查 dsh-collab 的安装与 `cordis.patch.yml`。
 
 **记忆、技能或协作面板是空的。**
-这些数据来自 dsh-collab。按 [engine-and-plugins.md](engine-and-plugins.md) 安装插件并重启引擎。
+这些数据来自 [dsh-collab](https://github.com/sessionhive/dsh-collab)。按 [engine-and-plugins.md](engine-and-plugins.md) 安装插件并重启引擎。
 
 **场景桌面只有空白网格。**
 场景默认不带盒子，这是设计行为。进入「盒子设置」添加需要的模块。

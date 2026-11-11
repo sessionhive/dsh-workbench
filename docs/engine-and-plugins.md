@@ -3,7 +3,7 @@
 工作台只带外壳，不带 DSH 引擎本体。要让引擎视图、场景、记忆、技能和协作面板真正可用，本机需要两样东西：
 
 1. 一个可运行的 **DSH 引擎**；
-2. 装在 DSH profile 里的 **dsh-collab 插件**（社区插件，非 DeepSeek 官方产品）。
+2. 装在 DSH profile 里的 **[dsh-collab](https://github.com/sessionhive/dsh-collab) 插件**（社区插件，非 DeepSeek 官方产品；npm 包名 `@sessionhive/dsh-collab`）。
 
 文件、终端、网页、待办这些本地模块不依赖 dsh-collab；但引擎侧的角色卡、记忆归档、技能索引、工单与协作看板都来自它。
 
