@@ -1,9 +1,17 @@
 {
-  "name": "dsh-nexus-workbench",
+  "name": "dsh-workbench",
   "private": true,
   "version": "0.1.0",
-  "description": "DSH 中枢 · 集成工作台壳工程",
+  "description": "DSH 中枢 · 本地集成工作台",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sessionhive/dsh-workbench.git"
+  },
+  "homepage": "https://github.com/sessionhive/dsh-workbench#readme",
+  "bugs": {
+    "url": "https://github.com/sessionhive/dsh-workbench/issues"
+  },
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "concurrently -k -s first \"vite\" \"wait-on tcp:127.0.0.1:5173 && electron electron/main.cjs --dev-url=http://127.0.0.1:5173\"",
