@@ -135,6 +135,8 @@ export default function App() {
           const restored = stored.sessions.map((session) => ({
             ...session,
             icon: session.icon ?? roleIcon[session.id] ?? 'spark',
+            // 上下文占用目前没有引擎数据源；旧存档里的演示数值不再沿用。
+            context: 0,
             modules: normalizeModules(Array.isArray(session.modules) ? session.modules : []),
             moduleState:
               session.moduleState && typeof session.moduleState === 'object'
