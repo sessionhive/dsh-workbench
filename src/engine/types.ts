@@ -41,6 +41,9 @@ export interface EngineEvent {
   from?: string;
   to?: string;
   source?: string;
+  scene?: string;
+  protocol?: string;
+  seeded?: boolean;
 }
 
 export interface EngineSnapshot {
@@ -52,6 +55,106 @@ export interface EngineSnapshot {
   events: EngineEvent[];
   dispatches: EngineEvent[];
   errors: string[];
+}
+
+/** 神经元联动的轻量事件通道：只包含 events/ 下的会话事件与派单日志。 */
+export interface EngineEventFeed {
+  ok: boolean;
+  root: string;
+  readAt: number;
+  events: EngineEvent[];
+  dispatches: EngineEvent[];
+  error?: string;
+}
+
+/** 派单流程状态（插件按事件推导，优先级见派单规范 v2.1）。 */
+export type DispatchStage =
+  | 'created'
+  | 'dispatched'
+  | 'delivered'
+  | 'acked'
+  | 'started'
+  | 'submitted'
+  | 'verified'
+  | 'rejected'
+  | 'closed';
+
+export interface DispatchEventEntry {
+  ts?: string;
+  type?: string;
+  from?: string;
+  to?: string;
+  status?: string;
+  note?: string;
+  reason?: string;
+  refs?: string[];
+  day?: string;
+  order_id?: string;
+  heartbeat?: boolean;
+  seeded?: boolean;
+}
+
+export interface DispatchTiming {
+  queue_ms?: number | null;
+  start_delay_ms?: number | null;
+  work_ms?: number | null;
+  total_ms?: number | null;
+  submit_to_verify_ms?: number | null;
+  verify_to_close_ms?: number | null;
+  durations?: DispatchTiming;
+}
+
+export interface DispatchOverdue {
+  ack?: boolean;
+  submit?: boolean;
+  minutes?: number;
+}
+
+/** 插件按 day 隔离的订单对象；key = YYYY-MM-DD/dhNNN。 */
+export interface DispatchOrder {
+  key: string;
+  day: string;
+  id: string;
+  assignee?: string;
+  dispatcher?: string;
+  owner?: string;
+  current_owner?: string;
+  flow?: string[];
+  next?: string;
+  stage?: DispatchStage | string;
+  status?: string;
+  done?: boolean;
+  task?: string;
+  dispatched_at?: string;
+  submit_at?: string;
+  closed_at?: string;
+  handoff_count?: number;
+  overdue?: DispatchOverdue;
+  events?: DispatchEventEntry[];
+  timing?: DispatchTiming;
+}
+
+export interface DispatchFeedDay {
+  day: string;
+  ok: boolean;
+  count?: number;
+  error?: string;
+}
+
+/** 插件下发的超时/心跳阈值；旧版接口没有该字段时 UI 用兜底值。 */
+export interface DispatchThresholds {
+  staleMinutes?: number;
+  noticeMinutes?: number;
+  heartbeatMinutes?: number;
+}
+
+export interface DispatchFeedResult {
+  ok: boolean;
+  readAt: number;
+  days: DispatchFeedDay[];
+  orders: DispatchOrder[];
+  thresholds?: DispatchThresholds | null;
+  error?: string;
 }
 
 export type EngineProcessStatus = 'idle' | 'starting' | 'ready' | 'error';
@@ -115,6 +218,10 @@ export interface FileEntry {
   size: number;
   modified: number;
   ext: string;
+  /** 受保护的引擎目录（如 .dsh）：只显示名字，不可进入、预览或写入。 */
+  protected?: boolean;
+  /** 点开头的条目（含 .dsh）。 */
+  hidden?: boolean;
 }
 
 export interface FileListing {
@@ -131,6 +238,40 @@ export interface FilePreviewResult {
   size?: number;
   truncated?: boolean;
   binary?: boolean;
+  error?: string;
+}
+
+export interface StyleImageResult {
+  ok: boolean;
+  size?: number;
+  mime?: string;
+  dataUrl?: string;
+  error?: string;
+}
+
+export interface StyleScanItem {
+  key: string;
+  category: string;
+  id: string;
+  title: string;
+  series: string;
+  relative: string;
+  stillRelative: string;
+}
+
+export interface StyleScanCategory {
+  name: string;
+  count: number;
+}
+
+export interface StyleScanResult {
+  ok: boolean;
+  root: string;
+  base: string;
+  missing?: boolean;
+  total: number;
+  categories: StyleScanCategory[];
+  items: StyleScanItem[];
   error?: string;
 }
 
@@ -155,6 +296,24 @@ export interface EngineSkillScan {
   ok: boolean;
   root: string;
   entries: EngineSkillEntry[];
+  error: string;
+}
+
+/** 工具目录里的一份脚本，摘要来自 README 或脚本头部注释。 */
+export interface ToolScriptEntry {
+  id: string;
+  name: string;
+  summary: string;
+  ext: string;
+  size: number;
+  modified: number;
+}
+
+export interface ToolScanResult {
+  ok: boolean;
+  root: string;
+  missing: boolean;
+  entries: ToolScriptEntry[];
   error: string;
 }
 

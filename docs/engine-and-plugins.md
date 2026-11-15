@@ -1,6 +1,6 @@
 # DSH 引擎与插件依赖
 
-工作台只带外壳，不带 DSH 引擎本体。要让引擎视图、场景、记忆、技能和协作面板真正可用，本机需要两样东西：
+工作台只带外壳，不带 DSH 引擎本体。要让引擎视图、会话、记忆、技能和协作面板真正可用，本机需要两样东西：
 
 1. 一个可运行的 **DSH 引擎**；
 2. 装在 DSH profile 里的 **[dsh-collab](https://github.com/sessionhive/dsh-collab) 插件**（社区插件，非 DeepSeek 官方产品；npm 包名 `@sessionhive/dsh-collab`）。
@@ -35,7 +35,7 @@ node <engine>/apps/cli/lib/bin.js web --no-open --port 3083
 | --- | --- | --- |
 | 引擎安装目录 | `<root>/engine` | 存在 `apps/cli/lib/bin.js` |
 | 引擎数据目录 | `<root>/engine-data/.dsh` | 存在 `_meta/registry.json` |
-| 工作区 | `<root>/workspace` | 终端/场景的默认 cwd |
+| 工作区 | `<root>/workspace` | 终端/会话的默认 cwd |
 | 文件根 | `<root>` | 文件工作台的沙箱边界 |
 | 技能目录 | `<dataPath>/skills` | 存在技能子目录或 `SKILL.md` |
 | 工具目录 | `<root>/tools` | 工具页签扫描范围 |

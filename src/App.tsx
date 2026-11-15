@@ -1,18 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { SceneDesktop } from './components/SceneDesktop';
 import type { BoardTile } from './board/types';
 import { CommandPalette } from './components/CommandPalette';
+import { DetailDrawer } from './components/DetailDrawer';
 import { EngineSurface } from './components/EngineSurface';
 import { ModuleDrawer } from './components/ModuleDrawer';
 import { NewSessionWizard } from './components/NewSessionWizard';
 import { SessionEditor } from './components/SessionEditor';
-import { SessionPanel } from './components/SessionPanel';
 import { SessionRail } from './components/SessionRail';
 import { SettingsPanel } from './components/SettingsPanel';
 import { StatusBar } from './components/StatusBar';
 import { TitleBar } from './components/TitleBar';
 import { Toasts } from './components/Toasts';
-import { Icon } from './components/icons';
 import { initialSessions, roleIcon, statusLabel } from './data';
 import { useCostMeter } from './hooks/useCostMeter';
 import { useEngineData } from './hooks/useEngineData';
@@ -20,6 +19,7 @@ import { useEngineProcess } from './hooks/useEngineProcess';
 import { useLongPressSort } from './hooks/useLongPressSort';
 import { useSystemStats } from './hooks/useSystemStats';
 import { normalizeModuleState, normalizeModules, resetModules } from './moduleDefaults';
+import { useEngineActivity } from './engineActivity';
 import {
   emitWorkbenchEvent,
   getModuleDefinition,
@@ -35,6 +35,7 @@ import {
   themeBackground,
   themeVariables,
   type SettingsInput,
+  type WebSite,
   type WorkbenchSettings,
 } from './settings';
 import {
@@ -55,6 +56,53 @@ function shouldPersistModuleState(session: Session, key: string) {
   return Boolean(moduleId && getModuleDefinition(moduleId)?.manifest.persistState);
 }
 
+/** 旧版本把固定站点存在各会话的网页模块里；升级后并进全局列表，只做一次。 */
+function mergeLegacySites(sessions: Session[], current: WebSite[]): WebSite[] {
+  const seen = new Set(current.map((site) => site.url.replace(/\/+$/, '')));
+  const merged = [...current];
+  for (const session of sessions) {
+    for (const value of Object.values(session.moduleState ?? {})) {
+      const raw = (value as { sites?: unknown } | null)?.sites;
+      if (!Array.isArray(raw)) continue;
+      raw.forEach((item, index) => {
+        const site = item as Partial<WebSite> | null;
+        if (!site || typeof site.url !== 'string' || !/^https?:\/\//i.test(site.url)) return;
+        const key = site.url.trim().replace(/\/+$/, '');
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        merged.push({
+          id: typeof site.id === 'string' && site.id ? site.id : `legacy-${session.id}-${index}`,
+          label:
+            typeof site.label === 'string' && site.label.trim() ? site.label.trim() : key,
+          url: site.url.trim(),
+        });
+      });
+    }
+  }
+  return merged;
+}
+
+/** 固定站点已经是全局设置，旧会话状态里的 sites 字段读档时清掉，不再跟着存档落盘。 */
+function stripLegacySites(sessions: Session[]): Session[] {
+  return sessions.map((session) => {
+    let changed = false;
+    const moduleState = Object.fromEntries(
+      Object.entries(session.moduleState ?? {}).map(([key, value]) => {
+        if (!value || typeof value !== 'object' || !('sites' in value)) return [key, value];
+        const moduleId = key.startsWith('board:')
+          ? session.board?.tiles?.find((tile) => tile.id === key.slice('board:'.length))?.moduleId
+          : key;
+        if (moduleId !== 'web.search') return [key, value];
+        const next = { ...(value as Record<string, unknown>) };
+        delete next.sites;
+        changed = true;
+        return [key, next];
+      }),
+    );
+    return changed ? { ...session, moduleState } : session;
+  });
+}
+
 interface PersistedState {
   version?: number;
   sessions?: Session[];
@@ -62,7 +110,7 @@ interface PersistedState {
   customTemplates?: SessionTemplate[];
   railCollapsed?: boolean;
   selectedId?: string;
-  /** 场景桌面里手动收进「收纳」的场景，和侧边会话栏无关。 */
+  /** 会话桌面里手动收进「收纳」的会话，和侧边会话栏无关。 */
   sceneShelf?: string[];
 }
 
@@ -98,6 +146,23 @@ export default function App() {
     () => buildTemplates(engine, customTemplates),
     [customTemplates, engine],
   );
+
+  /** 新建会话向导里标记「引擎会话已添加」，避免同一场景重复建会话时看不出来。 */
+  const addedSceneIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const session of sessions) {
+      if (session.engine?.sceneId) ids.add(session.engine.sceneId);
+    }
+    return ids;
+  }, [sessions]);
+
+  const addedSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const session of sessions) {
+      if (session.harness?.sessionId) ids.add(session.harness.sessionId);
+    }
+    return ids;
+  }, [sessions]);
   const theme = useMemo(() => resolveTheme(settings), [settings]);
   const themeStyle = useMemo(
     () =>
@@ -108,7 +173,7 @@ export default function App() {
     [theme],
   );
 
-  /** 挂到根节点：用 portal 渲染到 body 的浮层（如场景收纳）也能拿到主题变量。 */
+  /** 挂到根节点：用 portal 渲染到 body 的浮层（如会话收纳）也能拿到主题变量。 */
   useEffect(() => {
     const root = document.documentElement;
     const variables = themeVariables(theme);
@@ -116,11 +181,16 @@ export default function App() {
     root.dataset.tone = theme.tone;
   }, [theme]);
 
+  /** 绑定列表和引擎模板都取自场景快照：每次打开设置或向导前重扫，刚建的引擎会话才能出现。 */
+  useEffect(() => {
+    if (wizardOpen || editorOpen) refreshEngine();
+  }, [editorOpen, refreshEngine, wizardOpen]);
+
   const selected = sessions.find((session) => session.id === selectedId) ?? sessions[0];
-  const runningCount = sessions.filter((session) => session.status === 'running').length;
+  const engineActivity = useEngineActivity();
+  /** 运行中会话以引擎页面的真实 running 为准，本地 session.status 只是旧存档。 */
+  const runningCount = engineActivity.working.length;
   const unreadCount = sessions.reduce((total, session) => total + session.unread, 0);
-  const detailAnchorRef = useRef<HTMLDivElement | null>(null);
-  const [detailMaxHeight, setDetailMaxHeight] = useState(0);
 
   useEffect(() => {
     const desktop = window.desktop;
@@ -131,8 +201,9 @@ export default function App() {
       .then(async (result) => {
         if (!alive) return;
         const stored = result.state as PersistedState | null;
+        let restored: Session[] = [];
         if (stored && Array.isArray(stored.sessions) && stored.sessions.length > 0) {
-          const restored = stored.sessions.map((session) => ({
+          restored = stored.sessions.map((session) => ({
             ...session,
             icon: session.icon ?? roleIcon[session.id] ?? 'spark',
             // 上下文占用目前没有引擎数据源；旧存档里的演示数值不再沿用。
@@ -143,7 +214,6 @@ export default function App() {
                 ? normalizeModuleState(session.moduleState)
                 : {},
           }));
-          setSessions(restored);
           if (stored.selectedId && restored.some((session) => session.id === stored.selectedId)) {
             setSelectedId(stored.selectedId);
           }
@@ -168,11 +238,21 @@ export default function App() {
                   typeof rawEngine.toolsPath === 'string' ? rawEngine.toolsPath : defaults.toolsPath,
               }
             : rawEngine;
-        if (stored?.settings) {
-          setSettings(mergeSettings({ ...stored.settings, engine: engineInput }));
-        } else if (defaults) {
-          setSettings(mergeSettings({ engine: engineInput }));
+        let nextSettings = stored?.settings
+          ? mergeSettings({ ...stored.settings, engine: engineInput })
+          : mergeSettings({ engine: engineInput });
+        if (!nextSettings.web.migrated) {
+          nextSettings = {
+            ...nextSettings,
+            web: {
+              sites: mergeLegacySites(restored, nextSettings.web.sites),
+              migrated: true,
+            },
+          };
         }
+        restored = stripLegacySites(restored);
+        if (restored.length > 0) setSessions(restored);
+        setSettings(nextSettings);
         if (Array.isArray(stored?.customTemplates)) setCustomTemplates(stored.customTemplates);
         if (typeof stored?.railCollapsed === 'boolean') setRailCollapsed(stored.railCollapsed);
         if (Array.isArray(stored?.sceneShelf)) {
@@ -305,6 +385,17 @@ export default function App() {
     }
   }, [activeViewId, centerModules, hydrated]);
 
+  // 切换会话时默认打开标签栏里排在最前的视图，和界面显示顺序保持一致。
+  useEffect(() => {
+    if (!hydrated) return;
+    const target = sessions.find((session) => session.id === selectedId);
+    if (!target) return;
+    const first = resolveModules(target, 'center.view')[0]?.moduleId;
+    if (first) setActiveViewId(first);
+    // 只在会话切换 / 水合完成时触发；拖拽重排标签或启停模块不应打断当前视图。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, hydrated]);
+
   const notify = useCallback((message: string, tone: ToastTone = 'info') => {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     setToasts((current) => [...current.slice(-3), { id, message, tone }]);
@@ -312,36 +403,6 @@ export default function App() {
       setToasts((current) => current.filter((toast) => toast.id !== id));
     }, 3000);
   }, []);
-
-  // 详情下拉的高度按按钮实际位置计算，保证始终停在底栏上方。
-  useEffect(() => {
-    if (!panelOpen) return;
-    const update = () => {
-      const anchor = detailAnchorRef.current;
-      if (!anchor) return;
-      const rect = anchor.getBoundingClientRect();
-      setDetailMaxHeight(Math.max(220, window.innerHeight - rect.bottom - 48));
-    };
-    update();
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
-  }, [panelOpen, railCollapsed, selectedId]);
-
-  useEffect(() => {
-    if (!panelOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!detailAnchorRef.current?.contains(event.target as Node)) setPanelOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPanelOpen(false);
-    };
-    window.addEventListener('pointerdown', onPointerDown, true);
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown, true);
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [panelOpen]);
 
   const selectSession = useCallback((id: RoleId) => {
     setSelectedId(id);
@@ -501,7 +562,7 @@ export default function App() {
             : session,
         ),
       );
-      notify('场景布局已保存', 'success');
+      notify('会话布局已保存', 'success');
     },
     [notify],
   );
@@ -538,6 +599,7 @@ export default function App() {
       openSession: openSessionAndDispatch,
       dispatchTask,
       notify,
+      updateSettings: setSettings,
       openSettings: () => setSettingsOpen(true),
       openNewSession: () => setWizardOpen(true),
       openModuleDrawer: () => setDrawerOpen(true),
@@ -560,7 +622,7 @@ export default function App() {
     const sessionActions: PaletteAction[] = sessions.map((session) => ({
       id: `session-${session.id}`,
       group: '切换会话',
-      title: `${session.name} · ${session.role}`,
+      title: session.name,
       hint: statusLabel[session.status],
       icon: session.icon,
       color: session.color,
@@ -623,8 +685,8 @@ export default function App() {
       {
         id: 'scene-desktop',
         group: '操作',
-        title: boardOpen ? '返回中枢台' : '切换到场景桌面',
-        hint: boardOpen ? '离开盒子拼装' : '盒子拼装 · 场景标签',
+        title: boardOpen ? '返回中枢台' : '切换到会话桌面',
+        hint: boardOpen ? '离开盒子拼装' : '盒子拼装 · 会话标签',
         icon: 'panel',
         run: () => setBoardOpen((open) => !open),
       },
@@ -655,7 +717,7 @@ export default function App() {
         id: 'rescan-engine',
         group: '操作',
         title: '重新扫描引擎数据',
-        hint: engine?.ok ? `${engine.scenes.length} 场景` : '未连接',
+        hint: engine?.ok ? `${engine.scenes.length} 会话` : '未连接',
         icon: 'refresh',
         run: refreshEngine,
       },
@@ -692,13 +754,36 @@ export default function App() {
           refreshEngine();
           notify(
             engine?.ok
-              ? `已重新扫描引擎数据 · ${engine.scenes.length} 个场景`
+              ? `已重新扫描引擎数据 · ${engine.scenes.length} 个会话`
               : '正在尝试连接引擎数据目录',
             engine?.ok ? 'success' : 'warn',
           );
         }}
         engineRefreshing={engineLoading}
         notify={notify}
+        browserSites={settings.browser.sites}
+        browserPinned={settings.browser.pinned}
+        onUpdateBrowserSites={(updater) =>
+          setSettings((current) => {
+            const sites = updater(current.browser.sites);
+            const alive = new Set(sites.map((site) => site.id));
+            const pinned = current.browser.pinned.filter((id) => alive.has(id));
+            return {
+              ...current,
+              browser: {
+                ...current.browser,
+                sites,
+                pinned: pinned.length === current.browser.pinned.length ? current.browser.pinned : pinned,
+              },
+            };
+          })
+        }
+        onUpdateBrowserPinned={(updater) =>
+          setSettings((current) => ({
+            ...current,
+            browser: { ...current.browser, pinned: updater(current.browser.pinned) },
+          }))
+        }
       />
 
       <div className={`workspace no-detail${railCollapsed ? ' rail-collapsed' : ''}`}>
@@ -758,49 +843,6 @@ export default function App() {
                 })}
               </div>
             )}
-
-            <div className="head-actions">
-              <div
-                className="detail-anchor"
-                ref={detailAnchorRef}
-                style={
-                  {
-                    '--detail-max': detailMaxHeight ? `${detailMaxHeight}px` : undefined,
-                  } as CSSProperties
-                }
-              >
-                <button
-                  type="button"
-                  className={`ghost-btn detail-toggle${panelOpen ? ' on' : ''}`}
-                  aria-expanded={panelOpen}
-                  aria-controls="session-detail-popover"
-                  title={panelOpen ? '收起会话详情' : '展开会话详情'}
-                  onClick={() => setPanelOpen((open) => !open)}
-                >
-                  <Icon name="panel" size={13} />
-                  会话详情
-                  <Icon
-                    name="chevronDown"
-                    size={12}
-                    className={`detail-chevron${panelOpen ? ' open' : ''}`}
-                  />
-                </button>
-
-                {panelOpen && (
-                  <SessionPanel
-                    session={selected}
-                    sessions={sessions}
-                    actions={moduleActions}
-                    settings={settings}
-                    engine={engine}
-                    engineLoading={engineLoading}
-                    refreshEngine={refreshEngine}
-                    onModuleStateChange={updateModuleState}
-                    onClose={() => setPanelOpen(false)}
-                  />
-                )}
-              </div>
-            </div>
           </div>
 
           <div className="center-body">
@@ -813,6 +855,7 @@ export default function App() {
                 settings={settings}
                 engine={engine}
                 engineLoading={engineLoading}
+                engineProcess={engineProcess}
                 refreshEngine={refreshEngine}
                 onModuleStateChange={updateModuleState}
                 onlyModuleId={activeModule.moduleId}
@@ -869,6 +912,8 @@ export default function App() {
           onCreate={createSession}
           onSaveTemplate={saveCustomTemplate}
           onDeleteTemplate={deleteCustomTemplate}
+          addedSceneIds={addedSceneIds}
+          addedSessionIds={addedSessionIds}
           onClose={() => setWizardOpen(false)}
         />
       )}
@@ -878,6 +923,7 @@ export default function App() {
           session={selected}
           engine={engine}
           onSave={(patch) => updateSession(selected.id, patch)}
+          onSaveTemplate={(config) => saveCustomTemplate(config, null)}
           onDelete={selected.id === 'hub' ? undefined : () => deleteSession(selected.id)}
           onClose={() => setEditorOpen(false)}
         />
@@ -891,6 +937,7 @@ export default function App() {
           settings={settings}
           engine={engine}
           engineLoading={engineLoading}
+          engineProcess={engineProcess}
           refreshEngine={refreshEngine}
           onSelectSession={selectSession}
           onReorderSessions={reorderSessions}
@@ -912,6 +959,19 @@ export default function App() {
         onRestart={() => {
           void restartEngine();
         }}
+      />
+
+      <DetailDrawer
+        session={selected}
+        sessions={sessions}
+        actions={moduleActions}
+        settings={settings}
+        engine={engine}
+        engineLoading={engineLoading}
+        refreshEngine={refreshEngine}
+        onModuleStateChange={updateModuleState}
+        open={panelOpen}
+        onOpenChange={setPanelOpen}
       />
 
       <Toasts items={toasts} />

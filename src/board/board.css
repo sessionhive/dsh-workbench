@@ -15,6 +15,7 @@
 }
 
 .board-bar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -22,6 +23,20 @@
   padding: 8px 18px;
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg-0) 72%, transparent);
+}
+
+/* 离屏量尺：不参与布局，只按真实标签样式撑出宽度。 */
+.board-scene-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  gap: 4px;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .board-scene-tabs {
@@ -68,7 +83,7 @@
   border-radius: 5px;
 }
 
-/* DSH 工作时，场景标签里的图标外圈呼吸。 */
+/* DSH 工作时，会话标签里的图标外圈呼吸。 */
 .board-scene-mark.working {
   animation: scene-working-halo 1.5s ease-in-out infinite;
 }
@@ -213,7 +228,7 @@
   background: rgba(255, 255, 255, 0.04);
 }
 
-/* 当前场景被收进收纳时，用淡高亮标出来，标签栏里没有它的位置。 */
+/* 当前会话被收进收纳时，用淡高亮标出来，标签栏里没有它的位置。 */
 .board-shelf-row.active {
   background: rgba(var(--accent-rgb), 0.09);
   box-shadow: inset 2px 0 0 rgba(var(--accent-rgb), 0.6);
@@ -685,90 +700,7 @@
   }
 }
 
-/* ---------------- Scene info ---------------- */
-
-.scene-info {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-  padding: 14px;
-}
-
-.scene-info-id {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.scene-info-icon {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  border: 1px solid;
-  border-radius: 10px;
-}
-
-.scene-info-name {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.scene-info-name strong {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-size: 13px;
-}
-
-.scene-info-name small {
-  font-size: 9.5px;
-  color: var(--muted);
-}
-
-.scene-info-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 9px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--field-bg-soft);
-  font-size: 10.5px;
-  color: var(--text-2);
-}
-
-.scene-info-model {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--muted);
-}
-
-.scene-info-context-head {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 5px;
-  font-size: 9.5px;
-  color: var(--muted);
-}
-
-.scene-info-context-head strong {
-  color: var(--text-2);
-}
-
-.scene-info-summary {
-  margin: 0;
-  font-size: 10.5px;
-  line-height: 1.65;
-  color: var(--text-2);
-}
+/* ---------------- Board settings ---------------- */
 
 .board-section-label {
   font-size: 9px;
@@ -968,81 +900,6 @@
   color: var(--muted);
 }
 
-.box-setting-size {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  flex-shrink: 0;
-  padding: 2px 5px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--field-bg-soft);
-}
-
-.box-setting-size span {
-  margin: 0 1px 0 3px;
-  font-size: 8.5px;
-  color: var(--muted);
-}
-
-.box-setting-size span:first-child {
-  margin-left: 0;
-}
-
-.box-setting-size b {
-  min-width: 14px;
-  text-align: center;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--text-2);
-}
-
-.box-setting-size button {
-  width: 16px;
-  height: 16px;
-  display: grid;
-  place-items: center;
-  border-radius: 4px;
-  color: var(--muted);
-}
-
-.box-setting-size button:hover:not(:disabled) {
-  background: rgba(var(--accent-rgb), 0.14);
-  color: var(--accent);
-}
-
-.box-setting-size button:disabled {
-  opacity: 0.28;
-  cursor: default;
-}
-
-.box-setting-size .box-size-reset {
-  width: 20px;
-  margin-left: 3px;
-  border-left: 1px solid var(--line);
-  border-radius: 0 4px 4px 0;
-}
-
-.box-setting-row .box-switch {
-  margin-top: 0;
-}
-
-.box-setting-enable {
-  flex-shrink: 0;
-  height: 22px;
-  padding: 0 9px;
-  border: 1px solid rgba(var(--accent-rgb), 0.28);
-  border-radius: 6px;
-  background: rgba(var(--accent-rgb), 0.1);
-  color: var(--accent);
-  font-size: 9.5px;
-}
-
-.box-setting-enable:hover {
-  background: rgba(var(--accent-rgb), 0.18);
-}
-
 .box-setting-remove {
   flex-shrink: 0;
   width: 22px;
@@ -1062,13 +919,6 @@
   color: var(--red);
   background: rgba(255, 100, 125, 0.12);
   opacity: 1;
-}
-
-/* 标准盒子不显示删除，用同宽占位保持右侧开关对齐。 */
-.box-setting-remove-slot {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
 }
 
 .box-setting-add {
@@ -1123,6 +973,34 @@
   background-image:
     linear-gradient(90deg, var(--line) 1px, transparent 1px),
     linear-gradient(180deg, var(--line) 1px, transparent 1px);
+}
+
+/* 一屏边界：默认 12 列 × 9 行，盒子摆到更下方时用这条线明确标出超出范围。 */
+.box-preview-screen-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  height: 0;
+  border-top: 1px dashed rgba(var(--accent-rgb), 0.85);
+  box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.35);
+  pointer-events: none;
+}
+
+.box-preview-screen-line em {
+  position: absolute;
+  right: 8px;
+  top: -17px;
+  padding: 1px 7px;
+  border: 1px solid rgba(var(--accent-rgb), 0.42);
+  border-radius: 999px;
+  background: var(--bg-0);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 8px;
+  line-height: 1.5;
+  white-space: nowrap;
 }
 
 .box-preview-tile {
@@ -1216,17 +1094,6 @@ body.box-preview-resizing * {
   font-size: 10px;
   line-height: 1.6;
   color: var(--muted);
-}
-
-.box-preview-note {
-  margin: 0;
-  padding: 8px 10px;
-  border: 1px dashed rgba(var(--accent-rgb), 0.32);
-  border-radius: 8px;
-  background: rgba(var(--accent-rgb), 0.05);
-  font-size: 9.5px;
-  line-height: 1.6;
-  color: var(--text-2);
 }
 
 .box-preview-ghost {
@@ -1428,23 +1295,16 @@ body.box-preview-resizing * {
 
 /* ---------------- Existing modules inside tiles ---------------- */
 
-.board-tile-body .feed.panel,
 .board-tile-body .files-view,
 .board-tile-body .web-view,
-.board-tile-body .todo-block.full,
-.board-tile-body .memory-block.full {
+.board-tile-body .todo-block.full {
   border: none;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
 
-.board-tile-body .feed.panel {
-  padding: 2px 10px 12px;
-}
-
-.board-tile-body .todo-block.full,
-.board-tile-body .memory-block.full {
+.board-tile-body .todo-block.full {
   padding: 10px 12px;
 }
 
@@ -1453,40 +1313,8 @@ body.box-preview-resizing * {
   background: transparent;
 }
 
-.board-tile-body .feed-day {
-  padding-top: 8px;
-}
-
 /* 盒子宽度适配：让现有模块按“盒子宽度”而不是窗口宽度收拢。 */
 @container tile (max-width: 380px) {
-  .board-tile-body .feed {
-    padding: 0 8px 8px;
-  }
-
-  .board-tile-body .feed-row {
-    grid-template-columns: 34px 8px minmax(0, 1fr);
-    gap: 8px;
-    padding: 9px 5px;
-  }
-
-  .board-tile-body .feed-open {
-    display: none;
-  }
-
-  .board-tile-body .feed-body p {
-    font-size: 10px;
-  }
-
-  .board-tile-body .feed-time {
-    font-size: 9px;
-  }
-
-  .board-tile-body .memory-meta,
-  .board-tile-body .memory-hit-meta {
-    display: none;
-  }
-
-  .board-tile-body .memory-block.full,
   .board-tile-body .todo-block.full {
     padding: 8px 10px;
   }
@@ -1520,10 +1348,6 @@ body.box-preview-resizing * {
     font-size: 9.5px;
   }
 
-  .board-tile-body .web-engines {
-    display: none;
-  }
-
   .board-tile-body .web-toolbar {
     gap: 3px;
     padding: 6px 8px;
@@ -1553,9 +1377,7 @@ body.box-preview-resizing * {
 }
 
 @container tile (max-height: 240px) {
-  .board-tile-body .feed-day,
   .board-tile-body .todo-progress,
-  .board-tile-body .memory-meta,
   .board-tile-body .neuron-hint,
   .board-tile-body .neuron-legend {
     display: none;
@@ -1568,25 +1390,41 @@ body.box-preview-resizing * {
   .board-tile-body .files-split {
     grid-template-columns: 1fr;
   }
+}
 
-  .scene-info-summary {
+@container tile (max-width: 520px) {
+  .board-tile-body .dispatch-columns {
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .board-tile-body .dispatch-text,
+  .board-tile-body .dispatch-seed,
+  .board-tile-body .dispatch-col-hint {
+    display: none;
+  }
+
+  .board-tile-body .run-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .board-tile-body .run-path,
+  .board-tile-body .run-note {
     display: none;
   }
 }
 
-@container tile (max-width: 320px) {
-  .scene-info {
-    padding: 11px;
-    gap: 10px;
-  }
-
-  .scene-info-summary,
-  .scene-info-model {
+@container tile (max-width: 360px) {
+  .board-tile-body .dispatch-order {
     display: none;
   }
 
-  .scene-info-status {
-    font-size: 10px;
+  .board-tile-body .dispatch-chip {
+    max-width: 120px;
+  }
+
+  .board-tile-body .run-grid {
+    grid-template-columns: 1fr;
   }
 }
 

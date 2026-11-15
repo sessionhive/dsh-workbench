@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ToastTone } from '../types';
+import type { WebSite } from '../settings';
+import { BrowserDock } from './BrowserDock';
 import { Icon } from './icons';
 
 interface TitleBarProps {
@@ -10,6 +12,10 @@ interface TitleBarProps {
   onRefreshEngine: () => void;
   engineRefreshing?: boolean;
   notify: (message: string, tone?: ToastTone) => void;
+  browserSites: WebSite[];
+  browserPinned: string[];
+  onUpdateBrowserSites: (updater: (sites: WebSite[]) => WebSite[]) => void;
+  onUpdateBrowserPinned: (updater: (ids: string[]) => string[]) => void;
 }
 
 export function TitleBar({
@@ -20,6 +26,10 @@ export function TitleBar({
   onRefreshEngine,
   engineRefreshing = false,
   notify,
+  browserSites,
+  browserPinned,
+  onUpdateBrowserSites,
+  onUpdateBrowserPinned,
 }: TitleBarProps) {
   const [maximized, setMaximized] = useState(false);
 
@@ -85,11 +95,20 @@ export function TitleBar({
         </div>
       </div>
 
-      <button type="button" className="command-trigger" onClick={onOpenPalette}>
-        <Icon name="search" size={14} />
-        <span>向中枢下达指令，或搜索会话…</span>
-        <kbd>Ctrl K</kbd>
-      </button>
+      <div className="command-cluster">
+        <BrowserDock
+          sites={browserSites}
+          pinned={browserPinned}
+          onUpdateSites={onUpdateBrowserSites}
+          onUpdatePinned={onUpdateBrowserPinned}
+          notify={notify}
+        />
+        <button type="button" className="command-trigger" onClick={onOpenPalette}>
+          <Icon name="search" size={14} />
+          <span>向中枢下达指令，或搜索会话…</span>
+          <kbd>Ctrl K</kbd>
+        </button>
+      </div>
 
       <div className="titlebar-right">
         <div className="mode-switch" role="tablist" aria-label="工作台模式">
@@ -109,11 +128,11 @@ export function TitleBar({
             role="tab"
             aria-selected={mode === 'board'}
             className={mode === 'board' ? 'on' : ''}
-            title="场景桌面 · 用盒子拼装当前场景"
+            title="会话桌面 · 用盒子拼装当前会话"
             onClick={() => onModeChange('board')}
           >
             <Icon name="panel" size={12} />
-            场景桌面
+            会话桌面
           </button>
         </div>
         <div className="win-controls">

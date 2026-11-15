@@ -4,7 +4,7 @@ export type TileDensity = 'compact' | 'regular' | 'wide';
 
 export type TileKind = 'module' | 'info';
 
-/** 场景桌面的盒子模型：位置与尺寸都以网格为单位。 */
+/** 会话桌面的盒子模型：位置与尺寸都以网格为单位。 */
 export interface BoardTile {
   id: string;
   kind: TileKind;
@@ -19,7 +19,7 @@ export interface BoardTile {
   minW: number;
   minH: number;
   accent?: string;
-  /** 用户在当前场景里手动隐藏；模块被会话停用时也会从桌面消失，但不改这里。 */
+  /** 用户在当前会话里从桌面移除；模块被会话停用时也会从桌面消失，但不改这里。 */
   hidden?: boolean;
 }
 

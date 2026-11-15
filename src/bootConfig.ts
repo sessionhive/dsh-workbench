@@ -12,7 +12,7 @@ export interface BootConfig {
 /** 内置启动日志：与 dsh web 的实际启动顺序对应。 */
 export const DEFAULT_BOOT_LINES = [
   '$ dsh web --no-open --port {port}',
-  '· 载入 DSH_HOME 与场景索引',
+  '· 载入 DSH_HOME 与会话索引',
   '· 解析会话、技能与记忆索引',
   '✓ 引擎进程已启动',
   '✓ 本地服务 127.0.0.1:{port} 已监听',

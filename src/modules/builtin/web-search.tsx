@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from 'react';
 import { Icon } from '../../components/icons';
+import type { WebSite } from '../../settings';
 import { useModuleState } from '../state';
 import type { ModuleDefinition } from '../types';
 
@@ -18,9 +19,13 @@ type WebviewElement = HTMLElement & {
   loadURL: (url: string) => Promise<void>;
   canGoBack: () => boolean;
   canGoForward: () => boolean;
+  setZoomFactor: (factor: number) => void;
+  getZoomFactor: () => number;
+  getWebContentsId: () => number;
 };
 
-const HOME_URL = 'https://www.google.com';
+/** 首页用必应：国内可直接打开，Google 会一直白屏卡在加载中。 */
+const HOME_URL = 'https://www.bing.com';
 const CHROME_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -36,27 +41,31 @@ interface BrowserTab {
   id: string;
   url: string;
   title: string;
+  /** 页面缩放比例，1 表示 100%；旧存档没有这个字段时按 100% 处理。 */
+  zoom?: number;
 }
 
-interface PinnedSite {
-  id: string;
-  label: string;
-  url: string;
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 2;
+const ZOOM_STEP = 0.1;
+
+/** React 不认 webview 的布尔属性，用字符串写进 DOM；Electron 只看属性是否存在。 */
+const ALLOW_POPUPS = { allowpopups: 'true' } as unknown as { allowpopups: boolean };
+
+function clampZoom(value: number) {
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(value * 100) / 100));
+}
+
+function zoomOf(tab: BrowserTab | undefined) {
+  if (!tab || typeof tab.zoom !== 'number' || !Number.isFinite(tab.zoom)) return 1;
+  return clampZoom(tab.zoom);
 }
 
 interface BrowserState {
   tabs: BrowserTab[];
   activeId: string;
-  sites: PinnedSite[];
   engine: EngineId;
 }
-
-const DEFAULT_SITES: PinnedSite[] = [
-  { id: 'site-bilibili', label: '哔哩哔哩', url: 'https://www.bilibili.com' },
-  { id: 'site-github', label: 'GitHub', url: 'https://github.com' },
-  { id: 'site-google', label: 'Google', url: 'https://www.google.com' },
-  { id: 'site-juejin', label: '掘金', url: 'https://juejin.cn' },
-];
 
 function tabId() {
   return `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
@@ -69,7 +78,6 @@ function blankTab(): BrowserTab {
 const FALLBACK_STATE: BrowserState = {
   tabs: [blankTab()],
   activeId: '',
-  sites: DEFAULT_SITES,
   engine: 'google',
 };
 FALLBACK_STATE.activeId = FALLBACK_STATE.tabs[0].id;
@@ -100,20 +108,57 @@ function toTarget(input: string, engine: EngineId) {
 function TabFrame({
   tab,
   active,
+  zoom,
   register,
   onNavigate,
   onTitle,
   onLoading,
+  onZoom,
 }: {
   tab: BrowserTab;
   active: boolean;
+  zoom: number;
   register: (id: string, view: WebviewElement | null) => void;
   onNavigate: (id: string, url: string) => void;
   onTitle: (id: string, title: string) => void;
   onLoading: (id: string, loading: boolean) => void;
+  onZoom: (id: string, direction: 'in' | 'out') => void;
 }) {
   const ref = useRef<WebviewElement | null>(null);
   const [startUrl] = useState(tab.url);
+
+  // 每个标签单独保留页面比例；页面 dom-ready 后再应用一次，避免被初始导航重置。
+  useEffect(() => {
+    const view = ref.current;
+    if (!view) return;
+    const apply = () => {
+      try {
+        view.setZoomFactor(zoom);
+      } catch {
+        /* 页面还在挂载时忽略 */
+      }
+    };
+    apply();
+    view.addEventListener('dom-ready', apply);
+    return () => view.removeEventListener('dom-ready', apply);
+  }, [zoom, startUrl]);
+
+  // Ctrl + 滚轮由主进程转发方向，只在命中本标签时更新共享状态。
+  useEffect(() => {
+    const off = window.desktop?.onWebviewZoom?.((payload) => {
+      const view = ref.current;
+      if (!view) return;
+      let id = 0;
+      try {
+        id = view.getWebContentsId();
+      } catch {
+        return;
+      }
+      if (payload.id !== id) return;
+      onZoom(tab.id, payload.direction);
+    });
+    return () => off?.();
+  }, [onZoom, tab.id]);
 
   useEffect(() => {
     const view = ref.current;
@@ -153,11 +198,23 @@ function TabFrame({
       src={startUrl}
       partition="persist:workbench-web"
       useragent={CHROME_UA}
+      // 没有 allowpopups 时 target=_blank / window.open 会被静默丢弃，
+      // 点击站内链接看起来像“没反应”；新窗口由主进程转成工作台里的新标签。
+      {...ALLOW_POPUPS}
     />
   );
 }
 
-function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'success' | 'warn') => void }) {
+function WebSearch({
+  notify,
+  sites,
+  updateSites,
+}: {
+  notify: (message: string, tone?: 'info' | 'success' | 'warn') => void;
+  /** 全局固定站点：所有场景、中枢与桌面盒子共用同一份。 */
+  sites: WebSite[];
+  updateSites: (updater: (sites: WebSite[]) => WebSite[]) => void;
+}) {
   const [state, setState] = useModuleState<BrowserState>(FALLBACK_STATE);
   const [address, setAddress] = useState('');
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -176,6 +233,7 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
   const supported = Boolean(window.desktop);
   const tabs = state.tabs.length > 0 ? state.tabs : FALLBACK_STATE.tabs;
   const activeTab = tabs.find((tab) => tab.id === state.activeId) ?? tabs[0];
+  const activeZoom = zoomOf(activeTab);
 
   const update = useCallback((next: (prev: BrowserState) => BrowserState) => {
     setStateRef.current(next);
@@ -210,6 +268,29 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
     else delete views.current[id];
   }, []);
 
+  // 页面里的 target=_blank / window.open 由主进程按 webContents id 转回来：
+  // 只有持有这个 webview 的浏览器视图开新标签，其他场景里的浏览器不受影响。
+  useEffect(() => {
+    const off = window.desktop?.onWebviewNewTab?.((payload) => {
+      const owner = Object.values(views.current).some((view) => {
+        try {
+          return Boolean(view) && view!.getWebContentsId() === payload.id;
+        } catch {
+          return false;
+        }
+      });
+      if (!owner) return;
+      const tab: BrowserTab = {
+        id: tabId(),
+        url: payload.url,
+        title: hostLabel(payload.url) || payload.url,
+      };
+      update((prev) => ({ ...prev, tabs: [...prev.tabs, tab], activeId: tab.id }));
+      setAddress(payload.url);
+    });
+    return () => off?.();
+  }, [update]);
+
   const handleNavigate = useCallback(
     (id: string, url: string) => {
       update((prev) => ({
@@ -236,6 +317,31 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
   const handleLoading = useCallback((id: string, loading: boolean) => {
     setLoadingId((current) => (loading ? id : current === id ? null : current));
   }, []);
+
+  const changeZoom = useCallback(
+    (id: string, direction: 'in' | 'out') => {
+      update((prev) => ({
+        ...prev,
+        tabs: prev.tabs.map((tab) =>
+          tab.id === id
+            ? {
+                ...tab,
+                zoom: clampZoom(zoomOf(tab) + (direction === 'in' ? ZOOM_STEP : -ZOOM_STEP)),
+              }
+            : tab,
+        ),
+      }));
+    },
+    [update],
+  );
+
+  const resetZoom = useCallback(() => {
+    const activeId = stateRef.current.activeId;
+    update((prev) => ({
+      ...prev,
+      tabs: prev.tabs.map((tab) => (tab.id === activeId ? { ...tab, zoom: 1 } : tab)),
+    }));
+  }, [update]);
 
   const navigate = useCallback(
     (raw: string) => {
@@ -312,17 +418,17 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
       return false;
     }
     const key = target.replace(/\/+$/, '');
-    if (stateRef.current.sites.some((site) => site.url.replace(/\/+$/, '') === key)) {
+    if (sites.some((site) => site.url.replace(/\/+$/, '') === key)) {
       notify('这个地址已经固定过了', 'info');
       return false;
     }
-    const site: PinnedSite = {
+    const site: WebSite = {
       id: `site-${Date.now().toString(36)}`,
       label: label.trim() || hostLabel(target) || target,
       url: target,
     };
-    update((prev) => ({ ...prev, sites: [...prev.sites, site] }));
-    notify(`已固定「${site.label}」`, 'success');
+    updateSites((prev) => [...prev, site]);
+    notify(`已固定「${site.label}」· 所有场景共用`, 'success');
     return true;
   };
 
@@ -347,7 +453,7 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
   };
 
   const removeSite = (id: string) => {
-    update((prev) => ({ ...prev, sites: prev.sites.filter((site) => site.id !== id) }));
+    updateSites((prev) => prev.filter((site) => site.id !== id));
   };
 
   const setEngine = (engine: EngineId) => {
@@ -373,7 +479,7 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
 
   const siteButtons = useMemo(
     () =>
-      state.sites.map((site) => (
+      sites.map((site) => (
         <button
           type="button"
           className="web-site-chip"
@@ -388,7 +494,7 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
           {site.label}
         </button>
       )),
-    [navigate, state.sites],
+    [navigate, sites],
   );
 
   if (!supported) {
@@ -485,6 +591,16 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
 
         <button
           type="button"
+          className={`web-zoom${activeZoom !== 1 ? ' scaled' : ''}`}
+          title="Ctrl + 滚轮调整网页比例 · 点击恢复 100%"
+          aria-label={`网页比例 ${Math.round(activeZoom * 100)}%`}
+          onClick={resetZoom}
+        >
+          {Math.round(activeZoom * 100)}%
+        </button>
+
+        <button
+          type="button"
           ref={pinRef}
           className={`icon-btn web-pin-btn${sitesOpen ? ' on' : ''}`}
           title="固定站点 · 管理这个盒子的常用地址"
@@ -506,7 +622,7 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
       {sitesOpen && (
         <div className="web-sites-pop" role="dialog" aria-label="固定站点" ref={popRef}>
           <header>
-            <strong>固定站点 · {state.sites.length}</strong>
+            <strong>固定站点 · 所有场景共用 · {sites.length}</strong>
             <button
               type="button"
               className="icon-btn"
@@ -517,10 +633,10 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
             </button>
           </header>
           <div className="web-sites-pop-list">
-            {state.sites.length === 0 && (
-              <p className="web-sites-empty">还没有固定站点，把常用地址存在这里。</p>
+            {sites.length === 0 && (
+              <p className="web-sites-empty">还没有固定站点，把常用地址存在这里，所有场景都会出现。</p>
             )}
-            {state.sites.map((site) => (
+            {sites.map((site) => (
               <div className="web-site-row" key={site.id}>
                 <button
                   type="button"
@@ -584,10 +700,12 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
               key={tab.id}
               tab={tab}
               active={tab.id === activeTab.id}
+              zoom={zoomOf(tab)}
               register={register}
               onNavigate={handleNavigate}
               onTitle={handleTitle}
               onLoading={handleLoading}
+              onZoom={changeZoom}
             />
           ) : null,
         )}
@@ -598,7 +716,7 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
               <Icon name="globe" size={24} />
             </span>
             <strong>新标签页</strong>
-            <p>地址栏可以输入网址，也可以直接搜索。固定站点只保存在这个浏览器盒子里。</p>
+            <p>地址栏可以输入网址，也可以直接搜索。固定站点存在全局，所有场景共用一份。</p>
 
             {siteButtons.length > 0 && <div className="web-start-sites">{siteButtons}</div>}
 
@@ -625,19 +743,20 @@ function WebSearch({ notify }: { notify: (message: string, tone?: 'info' | 'succ
       </div>
 
       <span className="web-current" title={activeTab.url || activeTab.title}>
-        {activeTab.url || `${tabs.length} 个标签 · ${state.sites.length} 个固定站点`}
+        {activeTab.url || `${tabs.length} 个标签 · ${sites.length} 个固定站点（所有场景共用）`}
       </span>
     </div>
   );
 }
 
-/** 网页浏览：多标签常驻 webview，常用地址可固定在这个盒子里。 */
+/** 网页浏览：多标签常驻 webview，固定站点全局共享。 */
 export const webSearchModule: ModuleDefinition = {
   manifest: {
     id: 'web.search',
     name: '网页浏览',
-    version: '0.3.0',
-    description: '多标签浏览，常用地址可固定；每个标签保持自己的页面，切换不重载。',
+    version: '0.5.0',
+    description:
+      '多标签浏览，固定站点所有场景共用；Ctrl + 滚轮调整页面比例，中枢与会话桌面共用同一个浏览器。',
     icon: 'globe',
     kind: ['view', 'tool'],
     slots: ['center.view'],
@@ -648,7 +767,18 @@ export const webSearchModule: ModuleDefinition = {
   center: {
     tabLabel: '网页',
     title: '网页浏览',
-    subtitle: () => '多标签 · 固定站点 · Chromium 内嵌',
+    subtitle: () => '多标签 · 固定站点全局共享 · Ctrl 滚轮缩放 · 与桌面盒子通用',
   },
-  View: ({ actions }) => <WebSearch notify={actions.notify} />,
+  View: ({ actions, settings }) => (
+    <WebSearch
+      notify={actions.notify}
+      sites={settings.web.sites}
+      updateSites={(updater) =>
+        actions.updateSettings((current) => ({
+          ...current,
+          web: { ...current.web, sites: updater(current.web.sites) },
+        }))
+      }
+    />
+  ),
 };

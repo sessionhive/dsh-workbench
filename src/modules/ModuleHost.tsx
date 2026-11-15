@@ -4,7 +4,7 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from 'react';
-import type { EngineSnapshot } from '../engine/types';
+import type { EngineProcessInfo, EngineSnapshot } from '../engine/types';
 import type { WorkbenchSettings } from '../settings';
 import type { Session } from '../types';
 import { getModuleDefinition, resolveModules } from './runtime';
@@ -24,6 +24,7 @@ interface SlotHostProps {
   settings: WorkbenchSettings;
   engine: EngineSnapshot | null;
   engineLoading: boolean;
+  engineProcess?: EngineProcessInfo | null;
   refreshEngine: () => void;
   onModuleStateChange: ModuleStateChangeHandler;
   /** 中心槽位只渲染当前页签对应的模块。 */
@@ -42,6 +43,7 @@ export function SlotHost({
   settings,
   engine,
   engineLoading,
+  engineProcess,
   refreshEngine,
   onModuleStateChange,
   onlyModuleId,
@@ -78,6 +80,7 @@ export function SlotHost({
                 settings={settings}
                 engine={engine}
                 engineLoading={engineLoading}
+                engineProcess={engineProcess}
                 refreshEngine={refreshEngine}
               />
             </ModuleBoundary>

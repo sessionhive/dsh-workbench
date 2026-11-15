@@ -251,7 +251,7 @@ function SkillDoc({
       {doc.loading && <div className="doc-state">正在读取技能…</div>}
       {!doc.loading && doc.error && <div className="doc-state warn">{doc.error}</div>}
       {!doc.loading && !doc.error && !editing && (
-        <Markdown text={doc.text} empty="该场景还没有技能文件。" className="doc-markdown" />
+        <Markdown text={doc.text} empty="该会话还没有技能文件。" className="doc-markdown" />
       )}
       {!doc.loading && !doc.error && editing && (
         <div className="doc-editor">
@@ -357,7 +357,7 @@ export function SessionDocs({ session, engine, root, notify }: SessionDocsProps)
       {!scene || !paths ? (
         <div className="doc-empty">
           <Icon name="database" size={18} />
-          <p>中枢调度没有绑定引擎场景，角色卡、技能和总结只对场景会话可用。</p>
+          <p>中枢调度没有绑定引擎会话，角色卡、技能和总结只对已绑定会话可用。</p>
         </div>
       ) : tab === 'card' ? (
         <CardDoc key={`card-${paths.card}`} root={root} relative={paths.card} notify={notify} />
@@ -365,7 +365,7 @@ export function SessionDocs({ session, engine, root, notify }: SessionDocsProps)
         <SkillDoc key={`skill-${paths.skill}`} root={root} relative={paths.skill} notify={notify} />
       ) : tab === 'skill' ? (
         <div className="doc-empty">
-          <p>该场景没有登记技能目录。</p>
+          <p>该会话没有登记技能目录。</p>
         </div>
       ) : (
         <SummaryDoc key={`summary-${paths.summary}`} root={root} relative={paths.summary} />

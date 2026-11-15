@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('desktop', {
   loadState: () => ipcRenderer.invoke('state:load'),
   saveState: (state) => ipcRenderer.invoke('state:save', state),
   scanEngine: (root) => ipcRenderer.invoke('engine:scan', root),
+  engineEvents: (root) => ipcRenderer.invoke('engine:events', root),
+  dispatchFeed: (days) => ipcRenderer.invoke('dispatch:feed', days),
   costSnapshot: (root) => ipcRenderer.invoke('cost:snapshot', root),
   engineStatus: () => ipcRenderer.invoke('engine:status'),
   engineStart: () => ipcRenderer.invoke('engine:start'),
@@ -29,6 +31,36 @@ contextBridge.exposeInMainWorld('desktop', {
     ipcRenderer.on('engine:status', listener);
     return () => ipcRenderer.removeListener('engine:status', listener);
   },
+  openfilmStatus: () => ipcRenderer.invoke('openfilm:status'),
+  openfilmEnsure: () => ipcRenderer.invoke('openfilm:ensure'),
+  openfilmOpenProject: (folder) => ipcRenderer.invoke('openfilm:open-project', folder),
+  openfilmChooseProject: () => ipcRenderer.invoke('openfilm:choose-project'),
+  openfilmOpenExternal: (url) => ipcRenderer.invoke('openfilm:open-external', url),
+  onOpenfilmStatus: (callback) => {
+    const listener = (_event, snapshot) => callback(snapshot);
+    ipcRenderer.on('openfilm:status', listener);
+    return () => ipcRenderer.removeListener('openfilm:status', listener);
+  },
+  onWebviewZoom: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('webview:zoom', listener);
+    return () => ipcRenderer.removeListener('webview:zoom', listener);
+  },
+  onWebviewNewTab: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('webview:new-tab', listener);
+    return () => ipcRenderer.removeListener('webview:new-tab', listener);
+  },
+  onWebviewEscape: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('webview:escape', listener);
+    return () => ipcRenderer.removeListener('webview:escape', listener);
+  },
+  agentDisplayStatus: () => ipcRenderer.invoke('agent-display:status'),
+  agentDisplayEnsure: () => ipcRenderer.invoke('agent-display:ensure'),
+  agentDisplayReinstall: () => ipcRenderer.invoke('agent-display:reinstall'),
+  agentDisplayImport: () => ipcRenderer.invoke('agent-display:import'),
+  agentDisplayOpenExternal: () => ipcRenderer.invoke('agent-display:open-external'),
   defaultPaths: () => ipcRenderer.invoke('paths:defaults'),
   pickEngineRoot: (defaultPath) => ipcRenderer.invoke('engine:pick-root', defaultPath),
   pickWorkspaceRoot: (defaultPath) => ipcRenderer.invoke('workspace:pick-root', defaultPath),
@@ -37,13 +69,22 @@ contextBridge.exposeInMainWorld('desktop', {
   listDirectory: (root, relative) => ipcRenderer.invoke('fs:list', { root, relative }),
   resolvePath: (root, target) => ipcRenderer.invoke('fs:resolve', { root, target }),
   previewFile: (root, relative) => ipcRenderer.invoke('fs:preview', { root, relative }),
+  readImage: (root, relative) => ipcRenderer.invoke('fs:image', { root, relative }),
+  scanStyles: (root) => ipcRenderer.invoke('styles:scan', { root }),
   writeFile: (root, relative, text) => ipcRenderer.invoke('fs:write', { root, relative, text }),
+  createDirectory: (root, relative, name) =>
+    ipcRenderer.invoke('fs:mkdir', { root, relative, name }),
+  createFile: (root, relative, name) => ipcRenderer.invoke('fs:create', { root, relative, name }),
+  removePath: (root, relative) => ipcRenderer.invoke('fs:remove', { root, relative }),
   healthCheck: (engineSettings) => ipcRenderer.invoke('health:check', engineSettings),
   readEngineDoc: (root, relative) => ipcRenderer.invoke('engine:doc-read', { root, relative }),
   writeEngineDoc: (root, relative, text) =>
     ipcRenderer.invoke('engine:doc-write', { root, relative, text }),
   scanSkills: (root) => ipcRenderer.invoke('engine:skills', root),
   readSkillDoc: (root, id) => ipcRenderer.invoke('engine:skill-doc', { root, id }),
+  scanTools: (root) => ipcRenderer.invoke('tools:scan', root),
+  readEngineOrder: (root, day, orderId, agent) =>
+    ipcRenderer.invoke('engine:order-doc', { root, day, orderId, agent }),
   copyText: (text) => ipcRenderer.invoke('clipboard:write', text),
   terminalShells: () => ipcRenderer.invoke('terminal:shells'),
   terminalStart: (options) => ipcRenderer.invoke('terminal:start', options),
@@ -66,5 +107,6 @@ contextBridge.exposeInMainWorld('desktop', {
   },
   openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
   openPath: (target) => ipcRenderer.invoke('shell:open-path', target),
+  openEnginePath: (root, relative) => ipcRenderer.invoke('engine:open-path', { root, relative }),
   platform: process.platform,
 });

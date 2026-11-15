@@ -37,7 +37,7 @@ interface TerminalTab {
 }
 
 interface TerminalState {
-  /** 场景里自己补充的常用指令。 */
+  /** 会话里自己补充的常用指令。 */
   custom: string[];
   /** 执行过的指令，去重后保留 40 条。 */
   history: HistoryEntry[];
@@ -402,7 +402,7 @@ function Terminal({
       return { ...base, custom: [...base.custom, value] };
     });
     setCustomDraft('');
-    notify('已加入场景常用指令', 'success');
+    notify('已加入会话常用指令', 'success');
   };
 
   const removeCustom = (cmd: string) => {
@@ -788,7 +788,7 @@ export const terminalModule: ModuleDefinition = {
   center: {
     tabLabel: '终端',
     title: '终端',
-    subtitle: ({ sessionCount }) => `常用指令 · 历史复用 · ${sessionCount} 个场景共享`,
+    subtitle: ({ sessionCount }) => `常用指令 · 历史复用 · ${sessionCount} 个会话共享`,
   },
   View: ({ session, actions, slot, settings, instanceKey }) => (
     <div className={`terminal-slot ${slot}`}>

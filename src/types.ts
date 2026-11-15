@@ -3,7 +3,7 @@ import type { SceneBoardState } from './board/types';
 
 export type SessionStatus = 'running' | 'waiting' | 'idle' | 'offline';
 
-/** 会话 id 不再限定内置角色，模板和引擎场景都可以创建新会话。 */
+/** 会话 id 不再限定内置角色，模板和引擎会话都可以创建新会话。 */
 export type RoleId = string;
 
 export type EventKind = 'info' | 'task' | 'done' | 'warn';
@@ -71,7 +71,11 @@ export type IconName =
   | 'cube'
   | 'orbit'
   | 'wave'
-  | 'pin';
+  | 'pin'
+  | 'reset'
+  | 'folderPlus'
+  | 'filePlus'
+  | 'film';
 
 export interface SessionEvent {
   id: string;
@@ -81,7 +85,7 @@ export interface SessionEvent {
   text: string;
 }
 
-/** 场景绑定的 Harness 会话；打开该场景的 DSH 时按标题定位并切换。 */
+/** 会话绑定的 Harness 会话；打开该会话的 DSH 时按标题定位并切换。 */
 export interface HarnessBinding {
   sessionId: string;
   title: string;
@@ -107,15 +111,15 @@ export interface Session {
   modules: ModuleInstance[];
   /** 按模块 id 隔离的运行时状态。 */
   moduleState: Record<string, unknown>;
-  /** 场景桌面的盒子布局，写入存档。 */
+  /** 会话桌面的盒子布局，写入存档。 */
   board?: SceneBoardState;
-  /** 由引擎场景创建的会话，保留只读引用。 */
+  /** 由引擎会话创建的会话，保留只读引用。 */
   engine?: {
     sceneId: string;
     sessionId?: string;
     memoryRoot?: string;
   };
-  /** 打开本场景的 DSH 时自动切换到的 Harness 会话。 */
+  /** 打开本会话的 DSH 时自动切换到的 Harness 会话。 */
   harness?: HarnessBinding;
   templateId?: string;
 }

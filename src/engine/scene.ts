@@ -1,7 +1,7 @@
 import type { EngineScene, EngineSnapshot } from './types';
 import type { Session } from '../types';
 
-/** 会话 → 引擎场景：优先用创建时的场景引用，其次用绑定会话的标题/ID 反查。 */
+/** 会话 → 引擎会话：优先用创建时的会话引用，其次用绑定会话的标题/ID 反查。 */
 export function resolveSessionScene(
   session: Session,
   engine: EngineSnapshot | null,
@@ -33,7 +33,7 @@ export interface AgentPaths {
   skill: string;
 }
 
-/** 场景对应的角色卡 / 总结 / 记忆 / 技能相对路径。 */
+/** 会话对应的角色卡 / 总结 / 记忆 / 技能相对路径。 */
 export function agentPathsOf(scene: EngineScene): AgentPaths {
   const memoryRoot = (scene.memoryRoot || `agents/${scene.id}`).replace(/\\/g, '/').replace(/\/$/, '');
   const agentId = memoryRoot.split('/').pop() || scene.id;

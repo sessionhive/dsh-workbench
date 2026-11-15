@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -10,9 +11,8 @@ import {
 import { createPortal } from 'react-dom';
 import { SceneBoard, resolveBoardOverlaps, resolveCollisions } from '../board/SceneBoard';
 import type { BoardTile, TileDensity } from '../board/types';
-import { statusLabel } from '../data';
 import { isSessionWorking, useEngineActivity } from '../engineActivity';
-import type { EngineSnapshot } from '../engine/types';
+import type { EngineProcessInfo, EngineSnapshot } from '../engine/types';
 import { useLongPressSort } from '../hooks/useLongPressSort';
 import {
   getModuleDefinition,
@@ -41,11 +41,12 @@ interface SceneDesktopProps {
   settings: WorkbenchSettings;
   engine: EngineSnapshot | null;
   engineLoading: boolean;
+  engineProcess?: EngineProcessInfo | null;
   refreshEngine: () => void;
   onSelectSession: (id: Session['id']) => void;
   onReorderSessions: (ids: Session['id'][]) => void;
   onSaveLayout: (id: Session['id'], tiles: BoardTile[]) => void;
-  /** 场景桌面自己的标签收纳；不影响左侧会话栏。 */
+  /** 会话桌面自己的标签收纳；不影响左侧会话栏。 */
   sceneShelf: string[];
   onSceneShelfChange: (ids: string[]) => void;
   onToggleModule: (moduleId: string, enabled: boolean) => void;
@@ -59,8 +60,8 @@ const CATEGORY_LABEL: Record<string, string> = {
   session: '会话',
 };
 
-/** 场景标签最多直接铺开几个，其余的自动进入「收纳」。 */
-const SCENE_TAB_LIMIT = 6;
+/** 会话标签按实际可用宽度铺开，放不下的才自动进入「收纳」。 */
+const SCENE_TAB_GAP = 4;
 
 function moduleTile(
   moduleId: string,
@@ -98,7 +99,7 @@ interface TileGeometry {
   minH: number;
 }
 
-/** 新建场景时的默认盒子排布；只登记适合当盒子的中心视图模块。 */
+/** 新建会话时的默认盒子排布；只登记适合当盒子的中心视图模块。 */
 const MODULE_GEOMETRY: Record<string, TileGeometry> = {
   'neuron.view': { x: 7, y: 0, w: 5, h: 5, minW: 4, minH: 4 },
   'todo.list': { x: 4, y: 4, w: 4, h: 3, minW: 3, minH: 2 },
@@ -106,32 +107,16 @@ const MODULE_GEOMETRY: Record<string, TileGeometry> = {
   'memory.search': { x: 4, y: 7, w: 4, h: 3, minW: 3, minH: 2 },
   'web.search': { x: 8, y: 5, w: 4, h: 3, minW: 4, minH: 3 },
   'terminal.console': { x: 0, y: 11, w: 5, h: 4, minW: 3, minH: 3 },
+  'dispatch.timeline': { x: 0, y: 0, w: 6, h: 4, minW: 4, minH: 3 },
+  'run.status': { x: 0, y: 0, w: 6, h: 4, minW: 4, minH: 3 },
 };
 
-/** 场景桌面只同步会话的中心视图模块，侧栏小模块不强行变成盒子。 */
+/** 会话桌面只同步会话的中心视图模块，侧栏小模块不强行变成盒子。 */
 function boardModuleIds(session: Session): string[] {
   return resolveModules(session, 'center.view').map((instance) => instance.moduleId);
 }
 
-function sceneInfoTile(session: Session): BoardTile {
-  return {
-    id: 'tile-info',
-    kind: 'info',
-    moduleId: 'scene.info',
-    title: session.name,
-    subtitle: `${session.role} · ${session.scene}`,
-    icon: session.icon,
-    x: 0,
-    y: 0,
-    w: 3,
-    h: 4,
-    minW: 3,
-    minH: 3,
-    accent: session.color,
-  };
-}
-
-/** 会话里新启用的模块补一个盒子，已有盒子（包括暂时隐藏的）保留位置。 */
+/** 会话里新启用的模块补一个盒子，已有盒子（包括已移除的）保留位置。 */
 function ensureModuleTiles(tiles: BoardTile[], session: Session): BoardTile[] {
   const existing = new Set(
     tiles.filter((tile) => tile.kind === 'module').map((tile) => tile.moduleId),
@@ -174,15 +159,15 @@ function readBoardTile(value: unknown): BoardTile | null {
 function restoreTiles(session: Session): BoardTile[] | null {
   const stored = session.board?.tiles;
   if (!Array.isArray(stored) || stored.length === 0) return null;
-  // 已下线模块的盒子不再回到桌面，也不出现在盒子设置里。
+  // 会话信息盒子已下线；已移除的模块也不再回到桌面。
   const kept = stored
     .map(readBoardTile)
     .filter((tile): tile is BoardTile => Boolean(tile))
-    .filter((tile) => tile.kind !== 'module' || !isRemovedModule(tile.moduleId));
+    .filter((tile) => tile.kind === 'module' && !isRemovedModule(tile.moduleId));
   return kept.length > 0 ? kept : null;
 }
 
-/** 载入存档时的可见性判断：隐藏盒子与未启用模块都不参与碰撞。 */
+/** 载入存档时的可见性判断：已移除的盒子与未启用模块都不参与碰撞。 */
 function visiblePredicate(session: Session) {
   const enabled = new Set(boardModuleIds(session));
   return (tile: BoardTile) =>
@@ -191,7 +176,7 @@ function visiblePredicate(session: Session) {
 
 function initialTiles(session: Session): BoardTile[] {
   const restored = restoreTiles(session);
-  // 场景桌面默认留空，盒子由用户在「盒子设置」里按需添加。
+  // 会话桌面默认留空，盒子由用户在「盒子设置」里按需添加。
   const base = restored ? ensureModuleTiles(restored, session) : [];
   return resolveBoardOverlaps(base, visiblePredicate(session));
 }
@@ -233,6 +218,7 @@ interface BoardModuleViewProps {
   settings: WorkbenchSettings;
   engine: EngineSnapshot | null;
   engineLoading: boolean;
+  engineProcess?: EngineProcessInfo | null;
   refreshEngine: () => void;
 }
 
@@ -249,6 +235,7 @@ function BoardModuleView({
   settings,
   engine,
   engineLoading,
+  engineProcess,
   refreshEngine,
 }: BoardModuleViewProps) {
   const definition = getModuleDefinition(moduleId);
@@ -272,6 +259,7 @@ function BoardModuleView({
           settings={settings}
           engine={engine}
           engineLoading={engineLoading}
+          engineProcess={engineProcess}
           refreshEngine={refreshEngine}
         />
       </ModuleBoundary>
@@ -279,56 +267,7 @@ function BoardModuleView({
   );
 }
 
-function SceneInfo({ session, density }: { session: Session; density: TileDensity }) {
-  return (
-    <div className={`scene-info density-${density}`}>
-      <div className="scene-info-id">
-        <span
-          className="scene-info-icon"
-          style={{
-            color: session.color,
-            background: `${session.color}14`,
-            borderColor: `${session.color}3d`,
-          }}
-        >
-          <Icon name={session.icon} size={19} />
-        </span>
-        <div className="scene-info-name">
-          <strong>{session.name}</strong>
-          <small>{session.role}</small>
-        </div>
-        <span className="scene-chip">{session.scene}</span>
-      </div>
-
-      <div className="scene-info-status">
-        <span className={`status-dot ${session.status}`} />
-        <span>{statusLabel[session.status]}</span>
-        <span className="scene-info-model">{session.model}</span>
-      </div>
-
-      {session.context > 0 && (
-        <div className="scene-info-context">
-          <div className="scene-info-context-head">
-            <span>上下文占用</span>
-            <strong className="mono">{session.context}%</strong>
-          </div>
-          <div className="context-bar">
-            <i
-              style={{
-                width: `${session.context}%`,
-                background: `linear-gradient(90deg, ${session.color}66, ${session.color})`,
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      <p className="scene-info-summary">{session.summary}</p>
-    </div>
-  );
-}
-
-/** 场景桌面：每个场景一块盒子布局，布局可写入存档。 */
+/** 会话桌面：每个会话一块盒子布局，布局可写入存档。 */
 export function SceneDesktop({
   session,
   sessions,
@@ -336,6 +275,7 @@ export function SceneDesktop({
   settings,
   engine,
   engineLoading,
+  engineProcess,
   refreshEngine,
   onSelectSession,
   onReorderSessions,
@@ -370,33 +310,91 @@ export function SceneDesktop({
     return [...(hub ? [hub] : []), ...ordered, ...missing];
   }, [sceneSort.order, sessions]);
 
-  // 场景标签收纳只作用于这块场景标签栏：手动收纳的先进去，超出上限的自动进去。
+  // 会话标签收纳只作用于这块会话标签栏：手动收纳的先进去，宽度放不下的自动进去。
   const [shelfOpen, setShelfOpen] = useState(false);
   const [shelfPos, setShelfPos] = useState<{ top: number; right: number } | null>(null);
   const shelfRef = useRef<HTMLDivElement | null>(null);
   const shelfPopRef = useRef<HTMLDivElement | null>(null);
+  const tabStripRef = useRef<HTMLDivElement | null>(null);
+  const tabMeasureRef = useRef<HTMLDivElement | null>(null);
   const manualShelf = useMemo(() => new Set(sceneShelf), [sceneShelf]);
   const hubScene = orderedScenes.find((item) => item.id === 'hub') ?? null;
-  const { sceneTabs, shelfScenes, restorableIds } = useMemo(() => {
-    const nonHub = orderedScenes.filter((item) => item.id !== 'hub');
-    const available = nonHub.filter((item) => !manualShelf.has(item.id));
-    const visible = available.slice(0, SCENE_TAB_LIMIT);
-    const visibleIds = new Set(visible.map((item) => item.id));
-    // 收纳里的场景只负责跳转，不自动弹回标签栏；标签已满时「移出收纳」也不可用。
-    const restorable = new Set<string>();
-    for (const item of nonHub) {
-      if (!manualShelf.has(item.id)) continue;
-      const index = nonHub
-        .filter((scene) => !manualShelf.has(scene.id) || scene.id === item.id)
-        .findIndex((scene) => scene.id === item.id);
-      if (index >= 0 && index < SCENE_TAB_LIMIT) restorable.add(item.id);
+  const nonHubScenes = useMemo(
+    () => orderedScenes.filter((item) => item.id !== 'hub'),
+    [orderedScenes],
+  );
+  const availableScenes = useMemo(
+    () => nonHubScenes.filter((item) => !manualShelf.has(item.id)),
+    [manualShelf, nonHubScenes],
+  );
+  // 先按全部铺开渲染，量到真实宽度后再收起放不下的标签。
+  const [fit, setFit] = useState<{ count: number; restorable: Set<string> }>(() => ({
+    count: Number.POSITIVE_INFINITY,
+    restorable: new Set<string>(),
+  }));
+  const sceneTabs = useMemo(
+    () => availableScenes.slice(0, fit.count),
+    [availableScenes, fit.count],
+  );
+  const visibleIds = useMemo(() => new Set(sceneTabs.map((item) => item.id)), [sceneTabs]);
+  const shelfScenes = useMemo(
+    () => nonHubScenes.filter((item) => !visibleIds.has(item.id)),
+    [nonHubScenes, visibleIds],
+  );
+  const restorableIds = fit.restorable;
+
+  const measureTabs = useCallback(() => {
+    const strip = tabMeasureRef.current;
+    const container = tabStripRef.current;
+    if (!strip || !container) return;
+    const widths = new Map<string, number>();
+    for (const node of Array.from(strip.children) as HTMLElement[]) {
+      const id = node.dataset.tabId;
+      if (id) widths.set(id, node.getBoundingClientRect().width);
     }
-    return {
-      sceneTabs: nonHub.filter((item) => visibleIds.has(item.id)),
-      shelfScenes: nonHub.filter((item) => !visibleIds.has(item.id)),
-      restorableIds: restorable,
-    };
-  }, [manualShelf, orderedScenes]);
+    const limit = container.clientWidth;
+    let used = hubScene ? widths.get(hubScene.id) ?? 0 : 0;
+    let count = 0;
+    for (const item of availableScenes) {
+      const width = widths.get(item.id) ?? 0;
+      const next = used > 0 ? used + SCENE_TAB_GAP + width : width;
+      if (next > limit + 0.5) break;
+      used = next;
+      count += 1;
+    }
+    // 剩下的空位还放得下手动收纳的会话时，允许一键移出。
+    const restorable = new Set<string>();
+    for (const item of nonHubScenes) {
+      if (!manualShelf.has(item.id)) continue;
+      const width = widths.get(item.id) ?? 0;
+      const need = used > 0 ? width + SCENE_TAB_GAP : width;
+      if (used + need > limit + 0.5) continue;
+      restorable.add(item.id);
+      used += need;
+    }
+    setFit((previous) => {
+      if (previous.count === count && previous.restorable.size === restorable.size) {
+        let same = true;
+        for (const id of restorable) {
+          if (!previous.restorable.has(id)) {
+            same = false;
+            break;
+          }
+        }
+        if (same) return previous;
+      }
+      return { count, restorable };
+    });
+  }, [availableScenes, hubScene, manualShelf, nonHubScenes]);
+
+  useLayoutEffect(() => {
+    measureTabs();
+    const container = tabStripRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => measureTabs());
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [measureTabs]);
 
   useEffect(() => {
     if (!shelfOpen) return;
@@ -426,7 +424,7 @@ export function SceneDesktop({
     }
     const rect = shelfRef.current?.getBoundingClientRect();
     if (!rect) return;
-    // 弹层挂到 body 上，避免被场景桌面里内嵌的引擎画面盖住。
+    // 弹层挂到 body 上，避免被会话桌面里内嵌的引擎画面盖住。
     setShelfPos({ top: rect.bottom + 8, right: Math.max(12, window.innerWidth - rect.right) });
     setShelfOpen(true);
   };
@@ -480,7 +478,7 @@ export function SceneDesktop({
       setDirty(dirtyRef.current[session.id] ?? initialDirty(session));
       setHasSaved(savedRef.current[session.id] ?? Boolean(stored));
       setModuleState(moduleStateRef.current[session.id] ?? { ...session.moduleState });
-      // 不同场景里有同名盒子：切换后清掉旧选中项和待归位队列，避免改到别的场景。
+      // 不同会话里有同名盒子：切换后清掉旧选中项和待归位队列，避免改到别的会话。
       setSelectedTileId('');
       pendingRevealRef.current.clear();
       if (draft) draftRef.current[session.id] = next;
@@ -502,7 +500,7 @@ export function SceneDesktop({
     setDirty(true);
   }, []);
 
-  /** 拖动/缩放只操作当前可见的盒子，隐藏盒子的位置原样保留。 */
+  /** 拖动/缩放只操作当前可见的盒子，已移除的盒子位置原样保留。 */
   const setVisibleTiles = useCallback<Dispatch<SetStateAction<BoardTile[]>>>(
     (action) => {
       updateTiles((current) => {
@@ -519,7 +517,7 @@ export function SceneDesktop({
   );
 
   /**
-   * 重新显示的盒子统一落到最下方，按添加顺序重新生成，
+   * 重新添加的盒子统一落到最下方，按添加顺序重新生成，
    * 不抢占已经在桌面上的盒子。
    */
   const bottomOf = useCallback(
@@ -540,7 +538,7 @@ export function SceneDesktop({
     [bottomOf],
   );
 
-  /** 拖动、缩放、显示与隐藏后立即落盘，不再等 Ctrl+S。 */
+  /** 拖动、缩放、添加与移除后立即落盘，不再等 Ctrl+S。 */
   const commitLayout = useCallback(
     (next: BoardTile[]) => {
       setTiles(next);
@@ -578,7 +576,7 @@ export function SceneDesktop({
     draftRef.current[session.id] = tiles;
   };
 
-  /** Ctrl/Cmd+S 随时保存当前场景布局；输入框和弹层里的保存留给它们自己。 */
+  /** Ctrl/Cmd+S 随时保存当前会话布局；输入框和弹层里的保存留给它们自己。 */
   const saveLayoutRef = useRef(saveLayout);
   saveLayoutRef.current = saveLayout;
   useEffect(() => {
@@ -616,57 +614,73 @@ export function SceneDesktop({
   const addTile = useCallback(
     (tile: BoardTile) => {
       const current = latestRef.current.tiles;
-      if (current.some((item) => item.id === tile.id)) return;
+      const existing = current.find((item) => item.id === tile.id);
+      // 已移除的盒子还在存档里，重新添加时原地复用并落到底部。
+      if (existing) {
+        if (!existing.hidden) return;
+        commitLayout(
+          placeAtBottom(
+            current.map((item) => (item.id === tile.id ? { ...item, hidden: false } : item)),
+            tile.id,
+          ),
+        );
+        return;
+      }
       const bottom = current.reduce((max, item) => Math.max(max, item.y + item.h), 0);
       commitLayout([...current, { ...tile, x: 0, y: bottom }]);
-    },
-    [commitLayout],
-  );
-
-  const hideTile = useCallback(
-    (id: string) => {
-      const target = latestRef.current.tiles.find((tile) => tile.id === id);
-      commitLayout(
-        latestRef.current.tiles.map((tile) =>
-          tile.id === id ? { ...tile, hidden: true } : tile,
-        ),
-      );
-      if (target) actions.notify(`已隐藏「${target.title}」 · 可在盒子设置中恢复`, 'info');
-    },
-    [actions, commitLayout],
-  );
-
-  const setTileHidden = useCallback(
-    (id: string, hidden: boolean) => {
-      let next = latestRef.current.tiles.map((tile) =>
-        tile.id === id ? { ...tile, hidden } : tile,
-      );
-      // 重新显示的盒子按新添加处理，落到桌面最下方。
-      if (!hidden) next = placeAtBottom(next, id);
-      commitLayout(next);
     },
     [commitLayout, placeAtBottom],
   );
 
-  /** 从桌面移除盒子；终端盒子会一起收掉它名下的 shell。 */
   const removeTile = useCallback(
     (id: string) => {
       const current = latestRef.current.tiles;
       const target = current.find((tile) => tile.id === id);
-      if (!target) return;
-      if (target.kind === 'module' && target.moduleId === 'terminal.console') {
-        // 主终端盒子与中枢台页签共用 shell，移除盒子时保留会话里的终端。
-        if (target.id !== 'tile-terminal.console') {
-          disposeTerminalInstance(terminalInstanceKey(session.id, target.id));
-        }
-      }
-      const next = current.filter((tile) => tile.id !== id);
+      if (!target || target.hidden) return;
+      const next = current.map((tile) => (tile.id === id ? { ...tile, hidden: true } : tile));
       commitLayout(next);
-      setSelectedTileId((active) => (active === id ? (next[0]?.id ?? '') : active));
-      actions.notify(`已从桌面移除「${target.title}」`, 'info');
+      setSelectedTileId((active) =>
+        active === id ? (next.find((tile) => isTileVisible(tile))?.id ?? '') : active,
+      );
+      actions.notify(`已从桌面移除「${target.title}」 · 可在盒子设置里重新添加`, 'info');
     },
-    [actions, commitLayout, session.id],
+    [actions, commitLayout, isTileVisible],
   );
+
+  /** 全部添加：清掉所有「已移除」状态，并把会话里还没上桌的模块补到桌面底部。 */
+  const addAllTiles = useCallback(() => {
+    const current = latestRef.current.tiles;
+    const restored = new Set<string>();
+    let next = current.map((tile) => {
+      if (tile.hidden && isTileVisible({ ...tile, hidden: false })) {
+        restored.add(tile.id);
+        return { ...tile, hidden: false };
+      }
+      return tile;
+    });
+    for (const id of restored) next = placeAtBottom(next, id);
+    const existing = new Set(next.map((tile) => tile.moduleId));
+    const missing = boardModuleIds(session).filter((moduleId) => !existing.has(moduleId));
+    for (const moduleId of missing) {
+      const geometry = MODULE_GEOMETRY[moduleId];
+      const tile = geometry
+        ? moduleTile(moduleId, 0, 0, geometry.w, geometry.h, geometry.minW, geometry.minH)
+        : moduleTile(moduleId, 0, 0, 4, 3, 3, 2);
+      next = placeAtBottom([...next, tile], tile.id);
+    }
+    if (restored.size === 0 && missing.length === 0) return;
+    commitLayout(next);
+    actions.notify('已把可用盒子全部添加到桌面', 'success');
+  }, [actions, commitLayout, isTileVisible, placeAtBottom, session]);
+
+  /** 全部移除：桌面上的盒子统一回到「可用盒子」，不丢尺寸和位置。 */
+  const removeAllTiles = useCallback(() => {
+    const current = latestRef.current.tiles;
+    if (!current.some((tile) => !tile.hidden)) return;
+    commitLayout(current.map((tile) => ({ ...tile, hidden: true })));
+    setSelectedTileId('');
+    actions.notify('已移除桌面上的全部盒子 · 可在盒子设置里重新添加', 'info');
+  }, [actions, commitLayout]);
 
   const resizeTileTo = useCallback(
     (id: string, w: number, h: number) => {
@@ -722,19 +736,6 @@ export function SceneDesktop({
     [commitLayout, isTileVisible],
   );
 
-  const showAllTiles = useCallback(() => {
-    const hidden = latestRef.current.tiles.filter((tile) => tile.hidden);
-    if (hidden.length === 0) return;
-    let next = latestRef.current.tiles.map((tile) =>
-      tile.hidden ? { ...tile, hidden: false } : tile,
-    );
-    // 全部显示时按列表顺序依次落到底部，互不抢占位置。
-    for (const tile of hidden) {
-      if (isTileVisible({ ...tile, hidden: false })) next = placeAtBottom(next, tile.id);
-    }
-    commitLayout(next);
-  }, [commitLayout, isTileVisible, placeAtBottom]);
-
   const updateModuleState = useCallback(
     (key: string, update: unknown | ModuleStateUpdater) => {
       setModuleState((current) => {
@@ -754,23 +755,25 @@ export function SceneDesktop({
   const boardActions = useMemo<ModuleActions>(() => {
     const block = (message: string) => actions.notify(message, 'info');
     return {
-      selectSession: () => block('场景桌面：请用顶部场景标签切换'),
-      openSession: () => block('场景桌面：会话切换已由场景标签接管'),
-      dispatchTask: () => block('场景桌面：任务未派发'),
+      selectSession: () => block('会话桌面：请用顶部会话标签切换'),
+      openSession: () => block('会话桌面：会话切换已由会话标签接管'),
+      dispatchTask: () => block('会话桌面：任务未派发'),
       notify: actions.notify,
-      openSettings: () => block('场景桌面：请使用标题栏设置'),
-      openNewSession: () => block('场景桌面：新建会话请回到工作台'),
-      openModuleDrawer: () => block('场景桌面：盒子库尚未接入'),
+      updateSettings: actions.updateSettings,
+      openSettings: () => block('会话桌面：请使用标题栏设置'),
+      openNewSession: () => block('会话桌面：新建会话请回到工作台'),
+      openModuleDrawer: () => block('会话桌面：盒子库尚未接入'),
     };
   }, [actions]);
 
   const renderTile = (tile: BoardTile, density: TileDensity) => {
-    if (tile.kind === 'info') return <SceneInfo session={session} density={density} />;
+    if (tile.kind !== 'module') return null;
 
-    // 主终端盒子与中枢台的终端页签是同一个终端，连常用指令与分栏比例也共用。
-    const mainTerminal =
-      tile.moduleId === 'terminal.console' && tile.id === 'tile-terminal.console';
-    const stateKey = mainTerminal ? 'terminal.console' : `board:${tile.id}`;
+    // 主盒子与中枢台页签共用状态：终端共用常用指令/分栏，浏览器共用标签/站点/缩放。
+    const sharedModule =
+      tile.id === `tile-${tile.moduleId}` &&
+      (tile.moduleId === 'terminal.console' || tile.moduleId === 'web.search');
+    const stateKey = sharedModule ? tile.moduleId : `board:${tile.id}`;
     return (
       <BoardModuleView
         moduleId={tile.moduleId}
@@ -789,6 +792,7 @@ export function SceneDesktop({
         settings={settings}
         engine={engine}
         engineLoading={engineLoading}
+        engineProcess={engineProcess}
         refreshEngine={refreshEngine}
       />
     );
@@ -797,7 +801,6 @@ export function SceneDesktop({
   const libraryTiles = useMemo(() => {
     const existing = new Set(tiles.map((tile) => tile.id));
     const next: BoardTile[] = [];
-    if (!existing.has('tile-info')) next.push(sceneInfoTile(session));
     for (const moduleId of boardModuleIds(session)) {
       const geometry = MODULE_GEOMETRY[moduleId];
       const tile = geometry
@@ -812,7 +815,6 @@ export function SceneDesktop({
     <BoxSettingsPanel
       session={session}
       tiles={tiles}
-      visibleCount={visibleTiles.length}
       enabledModuleIds={enabledModuleIds}
       isTileVisible={isTileVisible}
       libraryTiles={libraryTiles}
@@ -820,11 +822,11 @@ export function SceneDesktop({
       onSelect={setSelectedTileId}
       onAdd={addTile}
       onRemove={removeTile}
-      onToggleHidden={setTileHidden}
       onResize={resizeTileTo}
       onResetSize={resetTileSize}
       onMove={moveTile}
-      onShowAll={showAllTiles}
+      onAddAll={addAllTiles}
+      onRemoveAll={removeAllTiles}
       onEnableModule={(tile) => {
         pendingRevealRef.current.add(tile.id);
         onToggleModule(tile.moduleId, true);
@@ -841,9 +843,9 @@ export function SceneDesktop({
   const activeInShelf = shelfScenes.some((item) => item.id === session.id);
 
   return (
-    <div className="board-desktop" role="dialog" aria-label="场景桌面">
+    <div className="board-desktop" role="dialog" aria-label="会话桌面">
       <header className="board-bar">
-        <div className="board-scene-tabs" role="tablist" aria-label="场景">
+        <div className="board-scene-tabs" role="tablist" aria-label="会话" ref={tabStripRef}>
           {[...(hubScene ? [hubScene] : []), ...sceneTabs].map((item) => {
             const active = item.id === session.id;
             const working = isSessionWorking(activity, item);
@@ -857,7 +859,7 @@ export function SceneDesktop({
                   dragging ? ' dragging' : ''
                 }`}
                 key={item.id}
-                title={`${item.name} · ${item.role}${working ? ' · DSH 正在工作' : ' · 长按拖拽排序'}`}
+                title={`${item.name}${working ? ' · DSH 正在工作' : ' · 长按拖拽排序'}`}
                 onClick={() => {
                   if (sceneSort.wasDragging()) return;
                   if (!active) onSelectSession(item.id);
@@ -877,6 +879,25 @@ export function SceneDesktop({
           })}
         </div>
 
+        {/* 离屏量尺：按真实字体和徽标宽度测量每个会话标签，决定标签栏放得下几个。 */}
+        <div className="board-scene-measure" aria-hidden="true" ref={tabMeasureRef}>
+          {[...(hubScene ? [hubScene] : []), ...nonHubScenes].map((item) => (
+            <button
+              type="button"
+              className="board-scene-tab"
+              key={item.id}
+              data-tab-id={item.id}
+              tabIndex={-1}
+            >
+              <span className="board-scene-mark" style={{ color: item.color }}>
+                <Icon name={item.icon} size={11} />
+              </span>
+              <span>{item.name}</span>
+              {item.unread > 0 && <em>{item.unread}</em>}
+            </button>
+          ))}
+        </div>
+
         <div className={`board-scene-shelf${shelfOpen ? ' open' : ''}`} ref={shelfRef}>
           <button
             type="button"
@@ -884,7 +905,7 @@ export function SceneDesktop({
             aria-expanded={shelfOpen}
             aria-haspopup="dialog"
             title={
-              activeInShelf ? '当前场景在收纳里 · 只影响场景桌面' : '收纳场景标签 · 只影响场景桌面'
+              activeInShelf ? '当前会话在收纳里 · 只影响会话桌面' : '收纳会话标签 · 只影响会话桌面'
             }
             onClick={toggleShelf}
           >
@@ -894,7 +915,7 @@ export function SceneDesktop({
           </button>
         </div>
 
-        <div className="board-bar-tabs" role="tablist" aria-label="场景桌面视图">
+        <div className="board-bar-tabs" role="tablist" aria-label="会话桌面视图">
           <button
             type="button"
             role="tab"
@@ -923,7 +944,7 @@ export function SceneDesktop({
             className="icon-btn"
             disabled={!dirty}
             aria-label="保存布局"
-            title={dirty ? '保存当前场景的盒子布局 · Ctrl+S' : '布局没有改动 · Ctrl+S 保存'}
+            title={dirty ? '保存当前会话的盒子布局 · Ctrl+S' : '布局没有改动 · Ctrl+S 保存'}
             onClick={saveLayout}
           >
             <Icon name="save" size={14} />
@@ -933,10 +954,10 @@ export function SceneDesktop({
               type="button"
               className="icon-btn"
               aria-label="重置布局"
-              title="重置布局"
+              title="重置布局 · 恢复默认盒子"
               onClick={resetLayout}
             >
-              <Icon name="restore" size={14} />
+              <Icon name="reset" size={14} />
             </button>
           )}
         </div>
@@ -948,13 +969,13 @@ export function SceneDesktop({
           <div
             className="board-shelf-pop"
             role="dialog"
-            aria-label="场景收纳"
+            aria-label="会话收纳"
             ref={shelfPopRef}
             style={{ top: shelfPos.top, right: shelfPos.right }}
           >
             <header>
-              <span>场景收纳</span>
-              <em>{shelfScenes.length} 个场景</em>
+              <span>会话收纳</span>
+              <em>{shelfScenes.length} 个会话</em>
             </header>
             {shelfScenes.length > 0 ? (
               <div className="board-shelf-list">
@@ -985,7 +1006,7 @@ export function SceneDesktop({
                         <span className="board-shelf-name">
                           <strong>{item.name}</strong>
                           <small>
-                            {item.role}
+                            {item.scene}
                             {working ? ' · 正在工作' : ''}
                             {active ? ' · 当前' : ''}
                           </small>
@@ -1001,12 +1022,16 @@ export function SceneDesktop({
                             onSceneShelfChange(sceneShelf.filter((id) => id !== item.id))
                           }
                         >
-                          <Icon name="restore" size={11} />
+                          <Icon name="x" size={11} />
                         </button>
                       ) : (
                         <span
                           className="board-shelf-auto"
-                          title={manual ? '标签栏已满，先收进一个可见场景再移出' : '超过标签上限，自动收纳'}
+                          title={
+                            manual
+                              ? '标签栏放不下，先移出一个可见会话再试'
+                              : '标签栏宽度放不下，自动收纳'
+                          }
                         >
                           {manual ? '标签满' : '自动'}
                         </span>
@@ -1017,7 +1042,7 @@ export function SceneDesktop({
               </div>
             ) : (
               <p className="board-shelf-empty">
-                标签不超过 {SCENE_TAB_LIMIT} 个时不会自动收纳，也可以在下面手动收进来。
+                标签栏放得下全部会话时不会自动收纳，也可以在下面手动收进来。
               </p>
             )}
             <div className="board-shelf-manage">
@@ -1039,7 +1064,7 @@ export function SceneDesktop({
                 ))}
               </div>
               {shelfCandidates.length === 0 && (
-                <span className="board-shelf-tip">其余场景都已经在收纳里。</span>
+                <span className="board-shelf-tip">其余会话都已经在收纳里。</span>
               )}
             </div>
           </div>,
@@ -1053,11 +1078,11 @@ export function SceneDesktop({
               <span className="board-empty-glyph">
                 <Icon name="layers" size={22} />
               </span>
-              <h4>{tiles.length === 0 ? '桌面是空的' : '盒子都隐藏了'}</h4>
+              <h4>{tiles.length === 0 ? '桌面是空的' : '盒子都移除了'}</h4>
               <p>
                 {tiles.length === 0
-                  ? '从「盒子设置」里挑需要的盒子放到桌面，每个场景单独保存布局。'
-                  : '到「盒子设置」里恢复显示，或者添加新的盒子。'}
+                  ? '从「盒子设置」里挑需要的盒子放到桌面，每个会话单独保存布局。'
+                  : '到「盒子设置」里重新添加，或者挑新的盒子。'}
               </p>
               <button type="button" className="primary-btn" onClick={() => setMode('settings')}>
                 <Icon name={tiles.length === 0 ? 'plus' : 'sliders'} size={13} />
@@ -1070,7 +1095,7 @@ export function SceneDesktop({
               tiles={visibleTiles}
               setTiles={setVisibleTiles}
               renderTile={renderTile}
-              onCloseTile={hideTile}
+              onCloseTile={removeTile}
             />
           )
         ) : (
@@ -1083,9 +1108,9 @@ export function SceneDesktop({
           <b>{visibleTiles.length}</b> 个盒子 · 12 列网格
         </span>
         {tiles.length > visibleTiles.length && (
-          <span>{tiles.length - visibleTiles.length} 个已隐藏</span>
+          <span>{tiles.length - visibleTiles.length} 个已移除</span>
         )}
-        <span>场景：{session.name}</span>
+        <span>会话：{session.name}</span>
         <span className="board-save-hint">Ctrl+S 保存</span>
         <span className={`board-save-state${dirty ? ' dirty' : ''}`}>
           {dirty

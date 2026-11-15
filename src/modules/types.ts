@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import type { EngineSnapshot } from '../engine/types';
+import type { EngineProcessInfo, EngineSnapshot } from '../engine/types';
 import type { WorkbenchSettings } from '../settings';
 import type { IconName, RoleId, Session, ToastTone } from '../types';
 
@@ -17,6 +17,14 @@ export type ModuleKind = 'view' | 'panel' | 'tool' | 'context';
 /** 模块分类：区分全局能力与只作用于单个会话的模块。 */
 export type ModuleCategory = 'core' | 'workspace' | 'knowledge' | 'session';
 
+/**
+ * 模块来源：标明这块能力是谁的，避免把外部/引擎内容误当自研代码发布。
+ * - workbench：本仓库自研
+ * - engine：DSH 引擎官方界面/能力
+ * - third-party：第三方项目或工具（如 OpenFilm）
+ */
+export type ModuleOrigin = 'workbench' | 'engine' | 'third-party';
+
 /** 模块声明的能力范围，M1 只做记录，M2 起用于运行时校验。 */
 export type ModulePermission =
   | 'sessions:read'
@@ -26,6 +34,7 @@ export type ModulePermission =
   | 'notify'
   | 'fs:read'
   | 'fs:write'
+  | 'fs:delete'
   | 'net:fetch';
 
 /** 模块自描述。注册表以 id 为唯一键。 */
@@ -39,6 +48,8 @@ export interface ModuleManifest {
   slots: SlotId[];
   /** 模块归属分类；缺省按会话内模块处理。 */
   category?: ModuleCategory;
+  /** 能力来源；缺省视为工作台自研。 */
+  origin?: ModuleOrigin;
   permissions?: ModulePermission[];
   /** 是否允许把该模块的运行时状态写入本地存档。 */
   persistState?: boolean;
@@ -71,6 +82,8 @@ export interface ModuleActions {
   openSession: (id: RoleId) => void;
   dispatchTask: (id: RoleId, text: string) => void;
   notify: (message: string, tone?: ToastTone) => void;
+  /** 模块修改全局设置（例如网页模块的固定站点）。 */
+  updateSettings: (updater: (settings: WorkbenchSettings) => WorkbenchSettings) => void;
   openSettings: () => void;
   openNewSession: () => void;
   openModuleDrawer: () => void;
@@ -82,12 +95,14 @@ export interface ModuleViewProps {
   session: Session;
   sessions: Session[];
   module: ModuleInstance;
-  /** 同一模块多开时的实例标识（场景桌面里按盒子区分）。 */
+  /** 同一模块多开时的实例标识（会话桌面里按盒子区分）。 */
   instanceKey?: string;
   actions: ModuleActions;
   settings: WorkbenchSettings;
   engine: EngineSnapshot | null;
   engineLoading: boolean;
+  /** 主进程托管的 dsh web 进程状态；只用于运行状态类模块。 */
+  engineProcess?: EngineProcessInfo | null;
   refreshEngine: () => void;
 }
 
@@ -98,7 +113,7 @@ export interface ModuleDefinition {
   center?: ModuleCenterMeta;
 }
 
-/** 场景模板描述一类会话默认装配哪些模块（M4 新建会话时使用）。 */
+/** 会话模板描述一类会话默认装配哪些模块（M4 新建会话时使用）。 */
 export interface SceneTemplate {
   id: string;
   name: string;

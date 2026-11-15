@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { BoardTile } from '../board/types';
 import type { Session } from '../types';
 import { Icon } from './icons';
@@ -6,7 +6,6 @@ import { Icon } from './icons';
 interface BoxSettingsPanelProps {
   session: Session;
   tiles: BoardTile[];
-  visibleCount: number;
   enabledModuleIds: Set<string>;
   isTileVisible: (tile: BoardTile) => boolean;
   libraryTiles: BoardTile[];
@@ -14,24 +13,21 @@ interface BoxSettingsPanelProps {
   onSelect: (id: string) => void;
   onAdd: (tile: BoardTile) => void;
   onRemove: (id: string) => void;
-  onToggleHidden: (id: string, hidden: boolean) => void;
   onResize: (id: string, w: number, h: number) => void;
   onResetSize: (tile: BoardTile) => void;
   onMove: (id: string, x: number, y: number) => void;
-  onShowAll: () => void;
+  onAddAll: () => void;
+  onRemoveAll: () => void;
   onEnableModule: (tile: BoardTile) => void;
 }
 
 function kindLabel(tile: BoardTile) {
-  if (tile.kind === 'info') return '场景信息';
   return `模块 · ${tile.moduleId}`;
 }
 
-/** 场景自带的标准盒子不提供删除；只有后期多加的盒子（如旧版多开的终端 2）才可移除。 */
-function isRemovable(tile: BoardTile) {
-  if (tile.id === 'tile-info') return false;
-  return tile.id !== `tile-${tile.moduleId}`;
-}
+/** 一块屏幕的格子数：宽 12 列、高 9 行；超出的部分在预览里画线标出。 */
+const SCREEN_COLUMNS = 12;
+const SCREEN_ROWS = 9;
 
 /**
  * 盒子设置：左边列桌面盒子与可添加盒子，右边只预览桌面上的盒子。
@@ -40,7 +36,6 @@ function isRemovable(tile: BoardTile) {
 export function BoxSettingsPanel({
   session,
   tiles,
-  visibleCount,
   enabledModuleIds,
   isTileVisible,
   libraryTiles,
@@ -48,24 +43,53 @@ export function BoxSettingsPanel({
   onSelect,
   onAdd,
   onRemove,
-  onToggleHidden,
   onResize,
   onResetSize,
   onMove,
-  onShowAll,
+  onAddAll,
+  onRemoveAll,
   onEnableModule,
 }: BoxSettingsPanelProps) {
-  const selected = tiles.find((tile) => tile.id === selectedId) ?? tiles[0] ?? null;
-  const selectedVisible = selected ? isTileVisible(selected) : false;
-  const selectedModuleEnabled =
-    selected === null || selected.kind !== 'module' || enabledModuleIds.has(selected.moduleId);
+  const boardTiles = tiles.filter(isTileVisible);
+  const selected = boardTiles.find((tile) => tile.id === selectedId) ?? boardTiles[0] ?? null;
 
-  const previewTiles = tiles.filter(isTileVisible);
   const previewRows = Math.max(
-    6,
-    ...previewTiles.map((tile) => tile.y + tile.h),
-    selected && selectedVisible ? selected.y + selected.h : 0,
+    SCREEN_ROWS,
+    ...boardTiles.map((tile) => tile.y + tile.h),
+    selected ? selected.y + selected.h : 0,
   );
+
+  const removedTiles = tiles.filter((tile) => !isTileVisible(tile));
+  const availableRows = [
+    ...removedTiles.map((tile) => ({
+      tile,
+      disabled: tile.kind === 'module' && !enabledModuleIds.has(tile.moduleId),
+    })),
+    ...libraryTiles.map((tile) => ({ tile, disabled: false })),
+  ];
+  const canAddAll =
+    removedTiles.some((tile) => tile.kind !== 'module' || enabledModuleIds.has(tile.moduleId)) ||
+    libraryTiles.length > 0;
+
+  // 选中盒子后按 Backspace / Delete 直接移除；输入框和弹层里不抢按键。
+  useEffect(() => {
+    if (!selected) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Backspace' && event.key !== 'Delete') return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        target.closest('input, textarea, select, [contenteditable="true"]')
+      ) {
+        return;
+      }
+      if (document.querySelector('.modal-overlay')) return;
+      event.preventDefault();
+      onRemove(selected.id);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onRemove, selected]);
 
   const selectOnKey = (event: KeyboardEvent<HTMLDivElement>, id: string) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -144,10 +168,13 @@ export function BoxSettingsPanel({
     if (!grid) return;
     event.preventDefault();
     const rect = grid.getBoundingClientRect();
-    const columnWidth = rect.width / 12;
+    const columnWidth = rect.width / SCREEN_COLUMNS;
     const nextX = Math.max(
       0,
-      Math.min(12 - tile.w, Math.floor((event.clientX - press.offsetX - rect.left) / columnWidth)),
+      Math.min(
+        SCREEN_COLUMNS - tile.w,
+        Math.floor((event.clientX - press.offsetX - rect.left) / columnWidth),
+      ),
     );
     const nextY = Math.max(
       0,
@@ -190,8 +217,8 @@ export function BoxSettingsPanel({
     clearPress();
     onSelect(tile.id);
     const rect = grid.getBoundingClientRect();
-    const columnWidth = rect.width / 12;
-    const maxW = Math.max(tile.minW, 12 - tile.x);
+    const columnWidth = rect.width / SCREEN_COLUMNS;
+    const maxW = Math.max(tile.minW, SCREEN_COLUMNS - tile.x);
     const startX = event.clientX;
     const startY = event.clientY;
     const startW = tile.w;
@@ -243,21 +270,32 @@ export function BoxSettingsPanel({
           <h3>盒子设置</h3>
           <p>
             右侧只预览桌面上的盒子：长按拖动换位，拖右下角把手调宽高，松手立即保存。
-            隐藏的盒子不会出现在预览里，重新显示后会落到桌面最下方。
+            选中盒子后按 Backspace / Delete 也能直接移除，移除的盒子会回到「可用盒子」。
           </p>
         </div>
         <div className="board-settings-tools">
           <span className="box-settings-count">
-            <b>{visibleCount}</b> / {tiles.length} 显示
+            <b>{boardTiles.length}</b> 个在桌面
           </span>
           <button
             type="button"
             className="ghost-btn"
-            onClick={onShowAll}
-            disabled={!tiles.some((tile) => tile.hidden)}
+            onClick={onAddAll}
+            disabled={!canAddAll}
+            title="把所有可用盒子添加到桌面"
           >
-            <Icon name="check" size={13} />
-            全部显示
+            <Icon name="plus" size={13} />
+            全部添加
+          </button>
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={onRemoveAll}
+            disabled={boardTiles.length === 0}
+            title="把桌面上的盒子全部移除到「可用盒子」"
+          >
+            <Icon name="trash" size={13} />
+            全部移除
           </button>
         </div>
       </div>
@@ -270,19 +308,14 @@ export function BoxSettingsPanel({
               <em>{session.name}</em>
             </header>
             <div className="box-settings-list" role="listbox" aria-label="桌面盒子">
-              {tiles.map((tile) => {
-                const moduleEnabled =
-                  tile.kind !== 'module' || enabledModuleIds.has(tile.moduleId);
-                const isVisible = !tile.hidden && moduleEnabled;
+              {boardTiles.map((tile) => {
                 const active = selected?.id === tile.id;
                 return (
                   <div
                     role="option"
                     aria-selected={active}
                     tabIndex={0}
-                    className={`box-setting-row selectable${active ? ' selected' : ''}${
-                      isVisible ? '' : ' off'
-                    }`}
+                    className={`box-setting-row selectable${active ? ' selected' : ''}`}
                     key={tile.id}
                     onClick={() => onSelect(tile.id)}
                     onKeyDown={(event) => selectOnKey(event, tile.id)}
@@ -299,65 +332,27 @@ export function BoxSettingsPanel({
                     </span>
                     <div className="box-setting-name">
                       <strong>{tile.title}</strong>
-                      <small>
-                        {tile.kind === 'module' && !moduleEnabled
-                          ? `会话已停用 · ${tile.moduleId}`
-                          : kindLabel(tile)}
-                        {tile.hidden ? ' · 已隐藏' : ''}
-                      </small>
+                      <small>{kindLabel(tile)}</small>
                     </div>
                     <span className="box-setting-dims">
                       {tile.w}×{tile.h}
                     </span>
-
-                    {isRemovable(tile) ? (
-                      <button
-                        type="button"
-                        className="box-setting-remove"
-                        title="从桌面移除"
-                        aria-label={`从桌面移除 ${tile.title}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onRemove(tile.id);
-                        }}
-                      >
-                        <Icon name="trash" size={11} />
-                      </button>
-                    ) : (
-                      <span className="box-setting-remove-slot" aria-hidden="true" />
-                    )}
-
-                    {tile.kind === 'module' && !moduleEnabled ? (
-                      <button
-                        type="button"
-                        className="box-setting-enable"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onEnableModule(tile);
-                        }}
-                      >
-                        启用
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={isVisible}
-                        aria-label={isVisible ? '隐藏这个盒子' : '显示这个盒子'}
-                        title={isVisible ? '隐藏这个盒子' : '显示这个盒子'}
-                        className={`switch box-switch${isVisible ? ' on' : ''}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onToggleHidden(tile.id, isVisible);
-                        }}
-                      >
-                        <i />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="box-setting-remove"
+                      title="从桌面移除"
+                      aria-label={`从桌面移除 ${tile.title}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRemove(tile.id);
+                      }}
+                    >
+                      <Icon name="trash" size={11} />
+                    </button>
                   </div>
                 );
               })}
-              {tiles.length === 0 && (
+              {boardTiles.length === 0 && (
                 <p className="box-settings-note">桌面还是空的，从下面「可用盒子」里添加。</p>
               )}
             </div>
@@ -366,13 +361,13 @@ export function BoxSettingsPanel({
           <section className="box-settings-card">
             <header>
               <span>可用盒子</span>
-              <em>{libraryTiles.length} 个未添加</em>
+              <em>{availableRows.length} 个未添加</em>
             </header>
-            {libraryTiles.length === 0 ? (
-              <p className="box-settings-note">这个场景的盒子都已经放到桌面上了。</p>
+            {availableRows.length === 0 ? (
+              <p className="box-settings-note">这个会话的盒子都已经放到桌面上了。</p>
             ) : (
               <div className="box-settings-list">
-                {libraryTiles.map((tile) => (
+                {availableRows.map(({ tile, disabled }) => (
                   <div className="box-setting-row" key={tile.id}>
                     <span
                       className="box-setting-icon"
@@ -386,18 +381,23 @@ export function BoxSettingsPanel({
                     </span>
                     <div className="box-setting-name">
                       <strong>{tile.title}</strong>
-                      <small>{kindLabel(tile)}</small>
+                      <small>
+                        {disabled ? `会话已停用 · ${tile.moduleId}` : kindLabel(tile)}
+                        {!disabled && tile.hidden ? ' · 已移除' : ''}
+                      </small>
                     </div>
                     <button
                       type="button"
                       className="box-setting-add"
+                      title={disabled ? '在会话中启用并添加到桌面' : '添加到桌面'}
                       onClick={() => {
+                        if (disabled) onEnableModule(tile);
                         onAdd(tile);
                         onSelect(tile.id);
                       }}
                     >
-                      <Icon name="plus" size={11} />
-                      添加
+                      <Icon name={disabled ? 'check' : 'plus'} size={11} />
+                      {disabled ? '启用' : '添加'}
                     </button>
                   </div>
                 ))}
@@ -409,7 +409,7 @@ export function BoxSettingsPanel({
         <section className="box-settings-card box-settings-detail" aria-live="polite">
           <header>
             <span>盒子预览</span>
-            <em>{selected ? `${sizeOf(selected).w} × ${sizeOf(selected).h} 格` : '未选择盒子'}</em>
+            <em>{selected ? `选中 ${sizeOf(selected).w} × ${sizeOf(selected).h}` : '未选择盒子'}</em>
           </header>
 
           {!selected ? (
@@ -422,10 +422,21 @@ export function BoxSettingsPanel({
                   ref={gridRef}
                   style={{
                     height: `${previewRows * rowHeight}px`,
-                    backgroundSize: `calc(100% / 12) 100%, 100% ${rowHeight}px`,
+                    backgroundSize: `calc(100% / ${SCREEN_COLUMNS}) 100%, 100% ${rowHeight}px`,
                   }}
                 >
-                  {previewTiles.map((tile) => {
+                  {previewRows > SCREEN_ROWS && (
+                    <span
+                      className="box-preview-screen-line"
+                      style={{ top: `${SCREEN_ROWS * rowHeight}px` }}
+                      aria-hidden="true"
+                    >
+                      <em>
+                        一屏 · {SCREEN_COLUMNS} × {SCREEN_ROWS}
+                      </em>
+                    </span>
+                  )}
+                  {boardTiles.map((tile) => {
                     const active = selected.id === tile.id;
                     const dragging = drag?.id === tile.id;
                     const sizing = resize?.id === tile.id;
@@ -438,8 +449,8 @@ export function BoxSettingsPanel({
                           dragging ? ' dragging' : ''
                         }${sizing ? ' resizing' : ''}`}
                         style={{
-                          left: `calc(${(tile.x / 12) * 100}% + 2px)`,
-                          width: `calc(${(size.w / 12) * 100}% - 4px)`,
+                          left: `calc(${(tile.x / SCREEN_COLUMNS) * 100}% + 2px)`,
+                          width: `calc(${(size.w / SCREEN_COLUMNS) * 100}% - 4px)`,
                           top: `${tile.y * rowHeight + 2}px`,
                           height: `${size.h * rowHeight - 4}px`,
                         }}
@@ -476,22 +487,23 @@ export function BoxSettingsPanel({
                     <span
                       className="box-preview-ghost"
                       style={{
-                        left: `calc(${(drag.x / 12) * 100}% + 2px)`,
+                        left: `calc(${(drag.x / SCREEN_COLUMNS) * 100}% + 2px)`,
                         width: `calc(${
-                          (previewTiles.find((tile) => tile.id === drag.id)?.w ?? 4) / 12
+                          (boardTiles.find((tile) => tile.id === drag.id)?.w ?? 4) /
+                          SCREEN_COLUMNS
                         } * 100% - 4px)`,
                         top: `${drag.y * rowHeight + 2}px`,
                         height: `${
-                          (previewTiles.find((tile) => tile.id === drag.id)?.h ?? 3) *
+                          (boardTiles.find((tile) => tile.id === drag.id)?.h ?? 3) *
                             rowHeight -
                           4
                         }px`,
                       }}
                     />
                   )}
-                  {previewTiles.length === 0 && (
+                  {boardTiles.length === 0 && (
                     <p className="box-preview-empty">
-                      桌面上还没有显示的盒子，在左侧把盒子打开后就会出现在这里。
+                      桌面上还没有盒子，从左侧「可用盒子」里添加后就会出现在这里。
                     </p>
                   )}
                 </div>
@@ -500,20 +512,13 @@ export function BoxSettingsPanel({
                   <em>
                     第 {selected.x + 1} 列 · 第 {selected.y + 1} 行
                   </em>
-                  <small>长按拖动换位 · 拖右下角改尺寸 · 松手自动保存</small>
+                  <small>长按拖动换位 · 拖右下角改尺寸 · Backspace 移除</small>
                 </span>
-                {!selectedVisible && (
-                  <p className="box-preview-note">
-                    {!selectedModuleEnabled
-                      ? '这个模块的会话已停用，不会出现在预览里。启用后即可进入桌面。'
-                      : '这个盒子已隐藏，不会出现在预览里。打开上方的开关后会重新落到桌面底部。'}
-                  </p>
-                )}
               </div>
 
               <div className="box-detail-facts">
                 <span>
-                  <i>网格尺寸</i>
+                  <i>盒子尺寸</i>
                   <b>
                     {sizeOf(selected).w} 列 × {sizeOf(selected).h} 行
                   </b>
@@ -526,19 +531,16 @@ export function BoxSettingsPanel({
                 </span>
                 <span>
                   <i>状态</i>
-                  <b>
-                    {!selectedModuleEnabled
-                      ? '会话已停用'
-                      : selected.hidden
-                        ? '已隐藏'
-                        : '桌面显示'}
-                  </b>
+                  <b>桌面显示</b>
                 </span>
               </div>
 
               <div className="box-size-hint">
                 <Icon name="square" size={12} />
-                <span>拖动选中盒子右下角的把手调整宽高，每次吸附一格，松手立即保存。</span>
+                <span>
+                  拖动选中盒子右下角的把手调整宽高，每次吸附一格；选中后按 Backspace 或 Delete
+                  可直接移除。
+                </span>
               </div>
 
               <div className="box-detail-actions">
@@ -547,32 +549,21 @@ export function BoxSettingsPanel({
                   className="ghost-btn files-action"
                   onClick={() => onResetSize(selected)}
                   disabled={
-                    selected.w === Math.min(selected.minW, 12) &&
+                    selected.w === Math.min(selected.minW, SCREEN_COLUMNS) &&
                     selected.h === selected.minH
                   }
                 >
                   <Icon name="restore" size={12} />
                   恢复默认尺寸
                 </button>
-                {!selectedModuleEnabled ? (
-                  <button
-                    type="button"
-                    className="primary-btn files-action"
-                    onClick={() => onEnableModule(selected)}
-                  >
-                    <Icon name="check" size={12} />
-                    在会话中启用
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="primary-btn files-action"
-                    onClick={() => onToggleHidden(selected.id, selectedVisible)}
-                  >
-                    <Icon name={selectedVisible ? 'x' : 'check'} size={12} />
-                    {selectedVisible ? '从桌面隐藏' : '显示到桌面'}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="ghost-btn files-action"
+                  onClick={() => onRemove(selected.id)}
+                >
+                  <Icon name="trash" size={12} />
+                  从桌面移除
+                </button>
               </div>
             </div>
           )}

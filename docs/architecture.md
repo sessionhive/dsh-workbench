@@ -5,7 +5,7 @@
 ## 1. 技术栈
 
 - Electron 38：窗口、托盘、单实例锁、IPC、终端子进程、引擎托管。
-- React 19 + TypeScript：界面、场景桌面、模块渲染。
+- React 19 + TypeScript：界面、会话桌面、模块渲染。
 - Vite 6：开发服务器与生产构建。
 - 无 UI 组件库、无状态管理库；状态集中在 `App.tsx`，通过 props 和模块动作下发。
 
@@ -17,7 +17,7 @@ Electron main (electron/main.cjs)
 │  └─ preload.cjs（contextBridge，白名单 IPC）
 │     └─ React renderer
 │        ├─ 中枢台
-│        ├─ 场景桌面 / 盒子
+│        ├─ 会话桌面 / 盒子
 │        └─ sandboxed webview（DSH Harness 页面）
 ├─ DSH 引擎子进程（dsh web --no-open --port 3083）
 └─ 终端 shell 子进程（每个终端盒子一个常驻 shell）
@@ -45,7 +45,7 @@ Electron main (electron/main.cjs)
 
 `src/App.tsx` 是状态中心：
 
-- `sessions`：会话、场景绑定、模块实例、桌面盒子；
+- `sessions`：会话、会话绑定、模块实例、桌面盒子；
 - `settings`：主题、引擎路径、终端 shell、关闭行为；
 - `customTemplates`：自定义模板；
 - `selectedId`、`railCollapsed`、`sceneShelf`：界面态。
@@ -69,12 +69,12 @@ electron/
   engine-manager.cjs    引擎进程生命周期
 src/
   App.tsx               状态中心、视图切换、全局快捷键
-  board/                场景桌面：网格、盒子壳、拖拽/缩放、专注模式
+  board/                会话桌面：网格、盒子壳、拖拽/缩放、专注模式
   components/           顶栏、底栏、会话栏、详情、设置、弹窗
   modules/              模块注册表、宿主、运行时
     builtin/            文件、待办、网页、终端、记忆、神经元、DSH 引擎
   hooks/                引擎数据、进程状态、计费、系统指标、长按排序
-  engine/               引擎数据类型、场景绑定、峰谷时段
+  engine/               引擎数据类型、会话绑定、峰谷时段
   terminal/             终端运行时与类型
   neuron/               3D 神经元的渲染数据
   styles.css            全局样式、主题变量、布局
@@ -140,15 +140,15 @@ interface ModuleInstance {
 
 这条边界保证模块不能随意改别的会话或全局设置。
 
-## 5. 场景桌面
+## 5. 会话桌面
 
-场景桌面是每个会话的一块 12 列网格：
+会话桌面是每个会话的一块 12 列网格：
 
 - 行高固定，模块按 `x/y/w/h` 定位；
-- 盒子可以移动、缩放、隐藏、删除、专注；
+- 盒子可以移动、缩放、添加、移除、专注；
 - 碰撞检测与落底规则在 `src/board/SceneBoard.tsx`；
 - 布局保存在 `session.board.tiles`；
-- 场景标签的「收纳」只影响桌面标签栏，不改变会话栏；
+- 会话标签的「收纳」只影响桌面标签栏，不改变会话栏；
 - 拖动到画布上下边缘会持续自动滚动，指针离开画布也能继续收尾。
 
 ## 6. IPC 一览
@@ -157,9 +157,10 @@ interface ModuleInstance {
 | --- | --- |
 | `state:load` / `state:save` | 工作台状态存档 |
 | `fs:list` / `fs:preview` / `fs:write` / `fs:resolve` | 文件沙箱 |
-| `engine:scan` | 扫描场景注册表 |
+| `engine:scan` | 扫描会话注册表 |
 | `engine:doc-read` / `engine:doc-write` | 角色卡、总结、记忆等白名单文档 |
 | `engine:skills` / `engine:skill-doc` | 技能列表与 `SKILL.md` 预览 |
+| `tools:scan` | 只读扫描工具目录脚本，摘要取 README 或脚本头部注释 |
 | `engine:start` / `engine:restart` / `engine:status` | 托管引擎进程 |
 | `cost:snapshot` | 计费账本快照 |
 | `health:check` | 上传体检项 |
@@ -182,7 +183,7 @@ interface ModuleInstance {
 存档包含：
 
 - `version`（当前为 3）；
-- `sessions`：身份、场景绑定、模块实例、模块状态、桌面盒子；
+- `sessions`：身份、会话绑定、模块实例、模块状态、桌面盒子；
 - `settings`：主题、密度、引擎路径、终端 shell、关闭行为；
 - `customTemplates`；
 - `railCollapsed`、`selectedId`、`sceneShelf`。
@@ -214,6 +215,6 @@ npm run shot       # 启动并截图到 shot.png
 ## 10. 已知限制
 
 - 主要面向 Windows；macOS/Linux 的托盘、shell 探测和快捷方式脚本未完整验证。
-- 场景与 Harness 会话的定位依赖标题匹配，DSH 页面结构大改时可能需要重新绑定。
+- 会话与 Harness 会话的定位依赖标题匹配，DSH 页面结构大改时可能需要重新绑定。
 - 没有内置安装包；分发安装器需要自行接入 electron-builder 等工具。
-- 引擎是外部依赖；没有引擎时外壳可以启动，但引擎视图与场景数据为空。
+- 引擎是外部依赖；没有引擎时外壳可以启动，但引擎视图与会话数据为空。

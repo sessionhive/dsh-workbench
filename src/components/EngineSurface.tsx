@@ -11,7 +11,7 @@ type EngineTarget = 'workbench' | 'board';
 interface EngineSurfaceProps {
   target: EngineTarget | null;
   info: EngineProcessInfo | null;
-  /** 当前场景绑定的 Harness 会话；打开 DSH 时自动定位。 */
+  /** 当前会话绑定的 Harness 会话；打开 DSH 时自动定位。 */
   harness?: HarnessBinding | null;
   /** 主题设置里的启动动画配置。 */
   boot?: BootConfig;
@@ -33,7 +33,7 @@ const STATUS_TEXT: Record<EngineProcessInfo['status'], string> = {
   error: 'DSH 引擎未连接',
 };
 
-/** 每种宿主形态对应的停靠锚点：中枢台是中心画布，场景桌面是引擎盒子的内容区。 */
+/** 每种宿主形态对应的停靠锚点：中枢台是中心画布，会话桌面是引擎盒子的内容区。 */
 const ANCHOR_SELECTOR: Record<EngineTarget, string> = {
   workbench: '.center-body',
   board: '.board-tile.kind-module[data-module-id="session.chat"] .board-tile-body',
@@ -115,7 +115,9 @@ function harnessNavigator(title: string) {
 
 /**
  * 读取官方页面的运行态。
- * 侧栏行本身没有忙碌标记，只能从当前会话的发送/停止按钮、running whale 和 aria-busy 判断。
+ * 侧栏行本身没有忙碌标记，但页面内部的会话列表保存了每个会话的 running；
+ * 从 React 容器 fiber 里找到这份列表，就能看到后台会话。
+ * DOM 的发送/停止按钮只作为当前会话的兜底信号。
  */
 const ACTIVITY_PROBE = `(() => {
   const clip = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -134,13 +136,59 @@ const ACTIVITY_PROBE = `(() => {
   const whale = Boolean(document.querySelector('[class*="runningWhale"]'));
   const busy =
     stop || sending || whale || document.querySelectorAll('[aria-busy="true"]').length > 0;
-  return { title, busy };
+
+  const readRunning = () => {
+    try {
+      const host = document.getElementById('root') || document.body;
+      let fiber = null;
+      for (const key of Object.keys(host)) {
+        if (key.startsWith('__reactContainer') || key.startsWith('__reactFiber')) {
+          fiber = host[key];
+          break;
+        }
+      }
+      if (!fiber) return null;
+      const queue = [fiber];
+      const seen = new Set();
+      let index = 0;
+      while (index < queue.length && index < 8000) {
+        const node = queue[index++];
+        if (!node || seen.has(node)) continue;
+        seen.add(node);
+        const props = node.memoizedProps;
+        const list = props && props.list;
+        if (list && list.byId && Array.isArray(list.ids)) {
+          const running = [];
+          for (const id of list.ids) {
+            const item = list.byId[id];
+            if (!item || !item.running) continue;
+            const name = clip(item.displayTitle || item.title || '');
+            if (name) running.push(name.slice(0, 80));
+          }
+          return running.slice(0, 30);
+        }
+        if (node.child) queue.push(node.child);
+        if (node.sibling) queue.push(node.sibling);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  return { title, busy, running: readRunning() };
 })()`;
+
+type ActivityProbeResult = {
+  title?: string;
+  busy?: boolean;
+  running?: unknown;
+};
 
 /**
  * 官方 Harness 页面常驻层。
  * 全局只挂一个 webview：用 requestAnimationFrame 跟随宿主盒子的位置与尺寸，
- * 宿主不存在时只隐藏、不卸载，因此切换场景或模式都不会重载线程页面。
+ * 宿主不存在时只隐藏、不卸载，因此切换会话或模式都不会重载线程页面。
  */
 export function EngineSurface({ target, info, harness, boot, onRestart }: EngineSurfaceProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -201,7 +249,7 @@ export function EngineSurface({ target, info, harness, boot, onRestart }: Engine
     };
   }, [url]);
 
-  // 进入某个场景的 DSH 时，把官方页面切到该场景绑定的会话。
+  // 进入某个会话的 DSH 时，把官方页面切到该会话绑定的 DSH 会话。
   useEffect(() => {
     const title = harness?.title;
     if (!target || !title) return;
@@ -252,7 +300,8 @@ export function EngineSurface({ target, info, harness, boot, onRestart }: Engine
     }
   }, [info?.status]);
 
-  // 轮询官方页面的运行态。侧栏没有逐行忙碌标记，只能盯当前会话的发送/停止信号。
+  // 轮询官方页面的运行态：会话列表 fiber 里的 running 是全部会话的权威来源，
+  // 当前会话的发送/停止信号只作兜底。
   useEffect(() => {
     if (phase !== 'ready' || !url) return;
 
@@ -265,13 +314,16 @@ export function EngineSurface({ target, info, harness, boot, onRestart }: Engine
       if (view?.executeJavaScript) {
         try {
           const result = (await view.executeJavaScript(ACTIVITY_PROBE, true)) as
-            | { title?: string; busy?: boolean }
+            | ActivityProbeResult
             | null;
           if (!disposed && result && typeof result === 'object') {
             setEngineActivity({
               ready: true,
               activeTitle: typeof result.title === 'string' ? result.title : '',
               busy: Boolean(result.busy),
+              running: Array.isArray(result.running)
+                ? result.running.filter((item): item is string => typeof item === 'string')
+                : null,
             });
           }
         } catch {
@@ -338,8 +390,8 @@ export function EngineSurface({ target, info, harness, boot, onRestart }: Engine
         return;
       }
 
-      // 场景桌面是滚动容器：盒子滚出可视区时，常驻 webview 必须一起被裁掉，
-      // 否则它会盖在顶栏、场景标签或底栏上，看起来“超出背景”。
+      // 会话桌面是滚动容器：盒子滚出可视区时，常驻 webview 必须一起被裁掉，
+      // 否则它会盖在顶栏、会话标签或底栏上，看起来“超出背景”。
       let clip = 'none';
       const stage = target === 'board' ? anchor?.closest('.board-stage') ?? null : null;
       if (stage) {

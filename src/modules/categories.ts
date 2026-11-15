@@ -1,4 +1,4 @@
-import type { ModuleCategory, ModuleManifest } from './types';
+import type { ModuleCategory, ModuleManifest, ModuleOrigin } from './types';
 
 export interface ModuleCategoryMeta {
   id: ModuleCategory;
@@ -21,7 +21,7 @@ export const MODULE_CATEGORIES: ModuleCategoryMeta[] = [
   {
     id: 'knowledge',
     label: '知识与记忆',
-    hint: '检索引擎场景、记忆文件与会话历史',
+    hint: '检索引擎会话、记忆文件与会话历史',
   },
   {
     id: 'session',
@@ -35,4 +35,39 @@ const FALLBACK = CATEGORY_MAP.get('session') as ModuleCategoryMeta;
 
 export function categoryOf(manifest: ModuleManifest): ModuleCategoryMeta {
   return CATEGORY_MAP.get(manifest.category ?? 'session') ?? FALLBACK;
+}
+
+export interface ModuleOriginMeta {
+  id: ModuleOrigin;
+  label: string;
+  short: string;
+  hint: string;
+}
+
+/** 来源顺序即图例顺序：先自研，再引擎，最后外部。 */
+export const MODULE_ORIGINS: ModuleOriginMeta[] = [
+  {
+    id: 'workbench',
+    label: '工作台自研',
+    short: '自研',
+    hint: '本仓库自己的模块，可随工作台一起开源',
+  },
+  {
+    id: 'engine',
+    label: 'DSH 引擎',
+    short: '引擎',
+    hint: '引擎官方界面与能力，随引擎提供，不属于本仓库',
+  },
+  {
+    id: 'third-party',
+    label: '外部能力',
+    short: '外部',
+    hint: '第三方项目或工具，遵循其自身许可，不要并入仓库发布',
+  },
+];
+
+const ORIGIN_MAP = new Map(MODULE_ORIGINS.map((item) => [item.id, item]));
+
+export function originOf(manifest: ModuleManifest): ModuleOriginMeta {
+  return ORIGIN_MAP.get(manifest.origin ?? 'workbench') ?? MODULE_ORIGINS[0];
 }

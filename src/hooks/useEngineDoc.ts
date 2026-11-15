@@ -7,7 +7,7 @@ interface EngineDocState {
 }
 
 /**
- * 只读/可写引擎文档（角色卡、技能、总结、场景记忆）。
+ * 只读/可写引擎文档（角色卡、技能、总结、会话记忆）。
  * 读写都走主进程白名单 IPC，未连接桌面端时保持空状态。
  */
 export function useEngineDoc(root: string, relative: string | null) {

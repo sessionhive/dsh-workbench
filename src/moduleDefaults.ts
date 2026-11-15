@@ -23,11 +23,16 @@ export function isRemovedModule(moduleId: string): boolean {
 export const MODULE_DEFAULTS: Record<string, ModuleDefault> = {
   'neuron.view': { enabled: true, order: 1 },
   'session.chat': { enabled: false, order: 0 },
+  'openfilm.editor': { enabled: true, order: 2, slotOrders: { 'center.view': 2 } },
   'todo.list': { enabled: true, order: 1, slotOrders: { 'center.view': 3, 'detail.block': 1 } },
   'files.browser': { enabled: false, order: 4 },
   'web.search': { enabled: false, order: 5 },
   'terminal.console': { enabled: false, order: 6 },
   'memory.search': { enabled: false, order: 3, slotOrders: { 'center.view': 6, 'detail.block': 3 } },
+  'dispatch.timeline': { enabled: false, order: 7 },
+  'run.status': { enabled: false, order: 8 },
+  'styles.library': { enabled: true, order: 9 },
+  'agent.display': { enabled: true, order: 10 },
 };
 
 export const DEFAULT_MODULE_ORDER = Object.keys(MODULE_DEFAULTS);
@@ -53,7 +58,7 @@ export function normalizeModules(instances: ModuleInstance[]): ModuleInstance[] 
     const preset = MODULE_DEFAULTS[moduleId];
     return {
       moduleId,
-      enabled: false,
+      enabled: preset.enabled,
       order: preset.order,
       slotOrders: preset.slotOrders,
       config: { ...(preset.config ?? {}) },

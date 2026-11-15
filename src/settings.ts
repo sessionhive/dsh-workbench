@@ -80,6 +80,58 @@ export const builtinThemes: ThemeDefinition[] = [
   },
 ];
 
+/** 网页模块的固定站点；存在全局设置里，所有场景共用一份。 */
+export interface WebSite {
+  id: string;
+  label: string;
+  url: string;
+}
+
+export const defaultWebSites: WebSite[] = [
+  { id: 'site-bilibili', label: '哔哩哔哩', url: 'https://www.bilibili.com' },
+  { id: 'site-github', label: 'GitHub', url: 'https://github.com' },
+  { id: 'site-google', label: 'Google', url: 'https://www.google.com' },
+  { id: 'site-juejin', label: '掘金', url: 'https://juejin.cn' },
+];
+
+/** 收纳内置地址的版本号：升版本时只补新增项，不把用户删掉的地址加回来。 */
+export const BROWSER_SEED_REV = 2;
+
+/** 第 2 版新增的地址，仅用于给老存档补齐。 */
+export const browserSeedRev2Sites: WebSite[] = [
+  { id: 'ai-xinghuo', label: '讯飞星火', url: 'https://xinghuo.xfyun.cn' },
+  { id: 'ai-tiangong', label: '天工AI', url: 'https://www.tiangong.cn' },
+  { id: 'ai-hailuo', label: '海螺AI', url: 'https://hailuoai.com' },
+  { id: 'ai-poe', label: 'Poe', url: 'https://poe.com' },
+  { id: 'ai-mistral', label: 'Mistral', url: 'https://chat.mistral.ai' },
+  { id: 'ai-aistudio', label: 'AI Studio', url: 'https://aistudio.google.com' },
+  { id: 'ai-gemini-nano', label: 'NotebookLM', url: 'https://notebooklm.google.com' },
+];
+
+/** 顶栏浏览器收纳的内置地址：常用站点 + 主流网页 AI，独立于网页模块。 */
+export const defaultAiSites: WebSite[] = [
+  { id: 'ai-chatgpt', label: 'ChatGPT', url: 'https://chatgpt.com' },
+  { id: 'ai-claude', label: 'Claude', url: 'https://claude.ai' },
+  { id: 'ai-gemini', label: 'Gemini', url: 'https://gemini.google.com' },
+  { id: 'ai-deepseek', label: 'DeepSeek', url: 'https://chat.deepseek.com' },
+  { id: 'ai-doubao', label: '豆包', url: 'https://www.doubao.com' },
+  { id: 'ai-kimi', label: 'Kimi', url: 'https://kimi.moonshot.cn' },
+  { id: 'ai-qwen', label: '通义千问', url: 'https://tongyi.aliyun.com' },
+  { id: 'ai-yuanbao', label: '腾讯元宝', url: 'https://yuanbao.tencent.com' },
+  { id: 'ai-yiyan', label: '文心一言', url: 'https://yiyan.baidu.com' },
+  { id: 'ai-chatglm', label: '智谱清言', url: 'https://chatglm.cn' },
+  { id: 'ai-perplexity', label: 'Perplexity', url: 'https://www.perplexity.ai' },
+  { id: 'ai-grok', label: 'Grok', url: 'https://grok.com' },
+  { id: 'ai-copilot', label: 'Copilot', url: 'https://copilot.microsoft.com' },
+  { id: 'ai-metaso', label: '秘塔搜索', url: 'https://metaso.cn' },
+  ...browserSeedRev2Sites,
+];
+
+export const defaultBrowserSites: WebSite[] = [
+  ...defaultWebSites,
+  ...defaultAiSites,
+];
+
 export interface WorkbenchSettings {
   appearance: {
     motion: boolean;
@@ -94,6 +146,22 @@ export interface WorkbenchSettings {
     dispatchHoldMs: number;
     /** 关闭窗口时收进系统托盘，而不是直接退出。 */
     closeToTray: boolean;
+  };
+  web: {
+    /** 全网共用一份固定站点，避免每个场景各加一遍。 */
+    sites: WebSite[];
+    /** 旧存档把站点存在各个会话里，首次读取时并入全局列表。 */
+    migrated: boolean;
+  };
+  /** 顶栏浏览器收纳：独立的一份地址清单，与网页模块互不影响。 */
+  browser: {
+    sites: WebSite[];
+    /** 内置网页 AI 只播一次种，避免用户删掉后又被加回来。 */
+    seeded: boolean;
+    /** 上次播种到的内置版本；升版本时只补新增项。 */
+    seedRev: number;
+    /** 置顶的地址 id，清单里排在前面；地址删除后自动清理。 */
+    pinned: string[];
   };
   engine: {
     /** DSH 引擎安装目录（含 apps/cli）。留空时由主进程给出与程序同级的默认值。 */
@@ -117,6 +185,8 @@ export interface WorkbenchSettings {
 export interface SettingsInput {
   appearance?: Partial<WorkbenchSettings['appearance']>;
   workbench?: Partial<WorkbenchSettings['workbench']>;
+  web?: Partial<WorkbenchSettings['web']>;
+  browser?: Partial<WorkbenchSettings['browser']>;
   engine?: Partial<WorkbenchSettings['engine']>;
   terminal?: Partial<WorkbenchSettings['terminal']>;
 }
@@ -136,6 +206,16 @@ export const defaultSettings: WorkbenchSettings = {
   workbench: {
     dispatchHoldMs: 4200,
     closeToTray: true,
+  },
+  web: {
+    sites: defaultWebSites,
+    migrated: false,
+  },
+  browser: {
+    sites: defaultBrowserSites.map((site) => ({ ...site })),
+    seeded: true,
+    seedRev: BROWSER_SEED_REV,
+    pinned: [],
   },
   engine: {
     engineDir: '',
@@ -164,6 +244,88 @@ function normalizeTheme(input: Partial<ThemeDefinition>, index: number): ThemeDe
   };
 }
 
+function normalizeSites(input: unknown): WebSite[] | null {
+  if (!Array.isArray(input)) return null;
+  const seen = new Set<string>();
+  const sites: WebSite[] = [];
+  input.forEach((item, index) => {
+    const site = item as Partial<WebSite> | null;
+    if (!site || typeof site.url !== 'string' || !/^https?:\/\//i.test(site.url)) return;
+    const key = site.url.trim().replace(/\/+$/, '');
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    sites.push({
+      id: typeof site.id === 'string' && site.id ? site.id : `site-${index}`,
+      label: typeof site.label === 'string' && site.label.trim() ? site.label.trim() : key,
+      url: site.url.trim(),
+    });
+  });
+  return sites;
+}
+
+function siteKey(url: string) {
+  return url.trim().replace(/\/+$/, '').toLowerCase();
+}
+
+/** 按地址去重追加：只补 base 里没有的项，保持已有顺序不变。 */
+function appendSites(base: WebSite[], extra: WebSite[]): WebSite[] {
+  const seen = new Set(base.map((site) => siteKey(site.url)));
+  const added: WebSite[] = [];
+  extra.forEach((site) => {
+    const key = siteKey(site.url);
+    if (seen.has(key)) return;
+    seen.add(key);
+    added.push({ ...site });
+  });
+  return added.length ? [...base, ...added] : base;
+}
+
+/** 置顶只存 id，过滤空值并去重；站点删除后的清理在更新入口完成。 */
+function normalizePins(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  return input.filter((id): id is string => {
+    if (typeof id !== 'string' || !id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+/**
+ * 浏览器收纳的内置地址：新装直接给全量；老存档只在未播种时补齐缺失项，
+ * 之后用户删掉哪个就保持删除，不再回填。内置清单升版时只补该版新增项。
+ */
+function mergeBrowserSettings(
+  input?: Partial<WorkbenchSettings['browser']>,
+): WorkbenchSettings['browser'] {
+  const stored = normalizeSites(input?.sites);
+  let sites: WebSite[];
+  let seedRev = BROWSER_SEED_REV;
+
+  if (!stored) {
+    sites = defaultBrowserSites.map((site) => ({ ...site }));
+  } else if (input?.seeded !== true) {
+    sites = appendSites(stored, defaultBrowserSites);
+  } else {
+    const rev = typeof input.seedRev === 'number' ? input.seedRev : 1;
+    if (rev >= BROWSER_SEED_REV) {
+      sites = stored;
+      seedRev = rev;
+    } else {
+      sites = appendSites(stored, browserSeedRev2Sites);
+    }
+  }
+
+  // 置顶只保留仍存在的地址，避免删除站点后留下无效 id。
+  const alive = new Set(sites.map((site) => site.id));
+  return {
+    sites,
+    seeded: true,
+    seedRev,
+    pinned: normalizePins(input?.pinned).filter((id) => alive.has(id)),
+  };
+}
+
 export function mergeSettings(input: SettingsInput | null | undefined): WorkbenchSettings {
   const appearance = input?.appearance ?? {};
   const storedThemes = Array.isArray(appearance.themes) ? appearance.themes : [];
@@ -174,6 +336,7 @@ export function mergeSettings(input: SettingsInput | null | undefined): Workbenc
   const themeId = themes.some((theme) => theme.id === appearance.themeId)
     ? appearance.themeId!
     : defaultSettings.appearance.themeId;
+  const storedSites = normalizeSites(input?.web?.sites);
   return {
     appearance: {
       motion: appearance.motion ?? defaultSettings.appearance.motion,
@@ -183,6 +346,11 @@ export function mergeSettings(input: SettingsInput | null | undefined): Workbenc
       boot: normalizeBootConfig(appearance.boot),
     },
     workbench: { ...defaultSettings.workbench, ...(input?.workbench ?? {}) },
+    web: {
+      sites: storedSites ?? defaultWebSites,
+      migrated: input?.web?.migrated === true,
+    },
+    browser: mergeBrowserSettings(input?.browser),
     engine: { ...defaultSettings.engine, ...(input?.engine ?? {}) },
     terminal: {
       shell:

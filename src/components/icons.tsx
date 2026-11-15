@@ -303,6 +303,33 @@ const paths: Record<IconName, ReactNode> = {
       <path d="M12 13.7v6.8" />
     </>
   ),
+  reset: (
+    <>
+      <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" />
+      <path d="M3.5 3.5v5h5" />
+    </>
+  ),
+  folderPlus: (
+    <>
+      <path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5Z" />
+      <path d="M3.5 10h17" />
+      <path d="M12 12.8v4M10 14.8h4" />
+    </>
+  ),
+  filePlus: (
+    <>
+      <path d="M6 3.5h7l5 5v12H6Z" />
+      <path d="M13 3.5v5h5" />
+      <path d="M12 12v5M9.5 14.5h5" />
+    </>
+  ),
+  film: (
+    <>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+      <path d="M3.5 9h17" />
+      <path d="m7.4 4.5 2.2 4.5M12.2 4.5l2.2 4.5M17 4.5l2.2 4.5" />
+    </>
+  ),
 };
 
 interface IconProps {

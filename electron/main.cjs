@@ -8,12 +8,17 @@ const {
   dialog,
   shell,
   clipboard,
+  session,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
+const { pathToFileURL } = require('url');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
 const { createEngineManager } = require('./engine-manager.cjs');
+const { createOpenfilmManager } = require('./openfilm-studio.cjs');
 
 /**
  * 壳工程不写死绝对路径：开发态以工作台目录的上一级为根，安装态以可执行文件所在目录为根。
@@ -327,6 +332,7 @@ let closeToTray = true;
 // DSH 引擎由工作台托管：启动时拉起 dsh web，退出时收掉；状态实时推给渲染层。
 // 引擎目录在存档读取后确定，所以管理器在 app ready 时创建。
 let engineManager = null;
+let openfilmManager = null;
 
 function createManagedEngine(paths) {
   const resolved = paths || defaultPaths();
@@ -352,7 +358,17 @@ const idleEngineStatus = () => ({
   startedAt: 0,
 });
 
-// webview 只跑官方引擎页面：去掉宿主 preload，禁止 Node 集成，外部链接交给系统浏览器。
+const idleOpenfilmStatus = () => ({
+  status: 'idle',
+  error: '',
+  attached: false,
+  origin: '',
+  editorUrl: '',
+  project: null,
+});
+
+// webview 只跑官方引擎页面：去掉宿主 preload，禁止 Node 集成。
+// 网页盒子里的 target=_blank / window.open 留在工作台开新标签，引擎页的外部链接交给系统浏览器。
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (_attachEvent, webPreferences) => {
     delete webPreferences.preload;
@@ -361,12 +377,52 @@ app.on('web-contents-created', (_event, contents) => {
     webPreferences.sandbox = true;
   });
   if (contents.getType() === 'webview') {
+    const isWebBox = contents.session === session.fromPartition('persist:workbench-web');
     contents.setWindowOpenHandler(({ url }) => {
       if (/^https?:\/\//i.test(url)) {
-        void shell.openExternal(url);
+        const host = contents.hostWebContents;
+        if (isWebBox && host && !host.isDestroyed()) {
+          host.send('webview:new-tab', { id: contents.id, url });
+        } else {
+          void shell.openExternal(url);
+        }
       }
       return { action: 'deny' };
     });
+    // 只接管工作台网页盒子的缩放；引擎页保留自己的 Ctrl + 滚轮行为。
+    if (isWebBox) {
+      contents.on('zoom-changed', (event, direction) => {
+        event.preventDefault();
+        const host = contents.hostWebContents;
+        if (!host || host.isDestroyed()) return;
+        host.send('webview:zoom', {
+          id: contents.id,
+          direction: direction === 'out' ? 'out' : 'in',
+        });
+      });
+    }
+    // 战术大屏全屏时焦点在页面里，Esc 到不了工作台：转给宿主决定是否退出全屏。
+    if (contents.session === session.fromPartition('persist:workbench-display')) {
+      // 三维主题按作者写法从 jsdelivr 取 three.js；国内直连经常整段断开，
+      // 只给大屏这个会话把同版本文件换到 npm 镜像，页面本身不改。
+      contents.session.webRequest.onBeforeRequest(
+        { urls: ['https://cdn.jsdelivr.net/npm/three@0.147.0/*'] },
+        (details, callback) => {
+          callback({
+            redirectURL: details.url.replace(
+              'https://cdn.jsdelivr.net/npm/three@0.147.0/',
+              'https://registry.npmmirror.com/three/0.147.0/files/',
+            ),
+          });
+        },
+      );
+      contents.on('before-input-event', (_inputEvent, input) => {
+        if (input.type !== 'keyDown' || input.key !== 'Escape') return;
+        const host = contents.hostWebContents;
+        if (!host || host.isDestroyed()) return;
+        host.send('webview:escape', { id: contents.id });
+      });
+    }
   }
 });
 
@@ -683,7 +739,7 @@ function scanEngine(rootInput) {
     scannedAt: new Date().toISOString(),
     scenes,
     skills: {
-      index: readText(path.join(root, 'skills', '_索引.md'), 4000),
+      index: readText(path.join(root, 'skills', '_index.md'), 4000),
       dirs: skillDirs,
     },
     events: tailJsonl(path.join(root, 'events', 'events.jsonl'), 80),
@@ -705,6 +761,10 @@ const ENGINE_DOC_WRITE = [
   /^skills\/[A-Za-z0-9._-]+\/SKILL\.md$/,
 ];
 
+// 神经元「打开目录 / 打开文件」的白名单前缀：只允许落到 agents/<id> 或 skills/<id>
+// 区域内，其余引擎数据（事件、账本、凭据等）一律不进系统资源管理器。
+const ENGINE_OPEN_PREFIX = [/^agents\/[A-Za-z0-9._-]+\//, /^skills\/[A-Za-z0-9._-]+\//];
+
 function normalizeDocRelative(value) {
   return String(value || '')
     .replace(/\\/g, '/')
@@ -716,6 +776,16 @@ function engineDocTarget(rootInput, relativeInput) {
   const relative = normalizeDocRelative(relativeInput);
   if (!relative || relative.startsWith('/') || relative.split('/').includes('..')) return null;
   if (!ENGINE_DOC_READ.some((pattern) => pattern.test(relative))) return null;
+  const target = resolveInside(root, relative);
+  return target ? { root, relative, target } : null;
+}
+
+/** 打开目录/文件用的白名单校验：只放行 agents/<id>、skills/<id> 内部路径。 */
+function engineOpenTarget(rootInput, relativeInput) {
+  const root = path.resolve(String(rootInput || defaultPaths().dataPath));
+  const relative = normalizeDocRelative(relativeInput);
+  if (!relative || relative.startsWith('/') || relative.split('/').includes('..')) return null;
+  if (!ENGINE_OPEN_PREFIX.some((pattern) => pattern.test(`${relative}/`))) return null;
   const target = resolveInside(root, relative);
   return target ? { root, relative, target } : null;
 }
@@ -737,6 +807,136 @@ function readEngineDoc(rootInput, relativeInput) {
   } catch (error) {
     return { ok: false, error: String(error.message || error) };
   }
+}
+
+// 派单详情只读 collab/<日期>/<单号>-<角色>[.状态].md，文件名来自目录列表，不接受外部拼接。
+const ORDER_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const ORDER_ID = /^[A-Za-z0-9._-]+$/;
+
+/** 按日期目录 + 单号找这一单的派单文件，只返回 collab 下已存在的 .md。 */
+function readEngineOrder(rootInput, dayInput, orderInput, agentInput) {
+  const root = path.resolve(String(rootInput || defaultPaths().dataPath));
+  const day = String(dayInput || '').trim();
+  const order = String(orderInput || '').trim();
+  const agent = safeSegment(agentInput, '');
+  if (!ORDER_DAY.test(day)) return { ok: false, error: '日期格式不正确' };
+  if (!ORDER_ID.test(order)) return { ok: false, error: '单号格式不正确' };
+  const dir = resolveInside(root, `collab/${day}`);
+  if (!dir) return { ok: false, error: '派单目录超出引擎目录' };
+  let names = [];
+  try {
+    names = fs
+      .readdirSync(dir)
+      .filter((name) => name.endsWith('.md') && name.startsWith(`${order}-`))
+      .filter((name) => ORDER_ID.test(name.slice(0, -3)));
+  } catch {
+    return { ok: false, error: '这一天的派单目录不存在' };
+  }
+  const preferred = agent
+    ? names.find((name) => name === `${order}-${agent}.md` || name.startsWith(`${order}-${agent}.`))
+    : '';
+  const name = preferred || names[0] || '';
+  if (!name) return { ok: false, error: '没有找到这一单的文件' };
+  const relative = `collab/${day}/${name}`;
+  const target = resolveInside(root, relative);
+  if (!target) return { ok: false, error: '派单文件超出引擎目录' };
+  try {
+    const stat = fs.statSync(target);
+    if (!stat.isFile()) return { ok: false, error: '不是文件' };
+    if (stat.size > 512 * 1024) return { ok: false, error: '文件超过 512KB，暂不预览' };
+    return {
+      ok: true,
+      relative,
+      size: stat.size,
+      modified: stat.mtimeMs,
+      text: fs.readFileSync(target, 'utf8'),
+    };
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) };
+  }
+}
+
+/**
+ * 派单模块首选数据源：插件按 day 隔离的派单接口。
+ * 只访问本机引擎端口上的这一个只读路径，不扩大引擎读取范围。
+ */
+const DISPATCH_FEED_PATH = '/plugins/workbench-core/dispatch-feed';
+const DISPATCH_FEED_LIMIT = 4 * 1024 * 1024;
+
+function fetchDispatchFeed(dayInput) {
+  const day = String(dayInput || '').trim();
+  if (!ORDER_DAY.test(day)) {
+    return Promise.resolve({ ok: false, day, readAt: Date.now(), orders: [], error: '日期格式不正确' });
+  }
+  const port = Number(engineManager ? engineManager.port : 3083) || 3083;
+  const url = `http://127.0.0.1:${port}${DISPATCH_FEED_PATH}?day=${encodeURIComponent(day)}`;
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    const req = http.get(url, { timeout: 5000 }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        done({
+          ok: false,
+          day,
+          readAt: Date.now(),
+          orders: [],
+          error: `派单接口返回 ${res.statusCode ?? '未知状态'}`,
+        });
+        return;
+      }
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        body += chunk;
+        if (body.length > DISPATCH_FEED_LIMIT) req.destroy();
+      });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(body);
+          const thresholds = parsed?.thresholds;
+          done({
+            ok: true,
+            day: typeof parsed?.day === 'string' ? parsed.day : day,
+            readAt: Date.now(),
+            orders: Array.isArray(parsed?.orders) ? parsed.orders : [],
+            thresholds:
+              thresholds && typeof thresholds === 'object' && !Array.isArray(thresholds)
+                ? thresholds
+                : null,
+          });
+        } catch {
+          done({ ok: false, day, readAt: Date.now(), orders: [], error: '派单数据解析失败' });
+        }
+      });
+      res.on('error', (error) => {
+        done({
+          ok: false,
+          day,
+          readAt: Date.now(),
+          orders: [],
+          error: String(error.message || error),
+        });
+      });
+    });
+    req.on('error', (error) =>
+      done({
+        ok: false,
+        day,
+        readAt: Date.now(),
+        orders: [],
+        error: String(error.message || error),
+      }),
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      done({ ok: false, day, readAt: Date.now(), orders: [], error: '派单接口超时' });
+    });
+  });
 }
 
 /** 技能预览只读技能目录下 <id>/SKILL.md，自定义技能目录同样适用。 */
@@ -844,6 +1044,99 @@ function scanSkills(rootInput) {
   } catch (error) {
     return { ok: false, root, entries: [], error: String(error.message || error) };
   }
+}
+
+const TOOL_SCRIPT_EXTS = new Set(['.mjs', '.js', '.cjs', '.ts', '.mts', '.py', '.ps1', '.sh', '.bat', '.cmd']);
+
+/** README 的「### 文件名 —— 说明」当作工具简介；同一文件只取第一条。 */
+function parseToolDocs(text) {
+  const docs = new Map();
+  for (const line of text.split(/\r?\n/)) {
+    const heading = line.match(/^###\s+(.+?)\s*$/);
+    if (!heading) continue;
+    const title = heading[1].replace(/`/g, '').trim();
+    const parts = title.split(/\s+[—–-]{1,2}\s+/);
+    const file = parts[0].trim();
+    if (!file || docs.has(file.toLowerCase())) continue;
+    docs.set(file.toLowerCase(), {
+      name: file,
+      summary: parts.slice(1).join(' ').trim(),
+      order: docs.size,
+    });
+  }
+  return docs;
+}
+
+/** 没有 README 说明时，取脚本头部第一行有效注释。 */
+function toolHeadSummary(text) {
+  for (const line of text.split(/\r?\n/).slice(0, 40)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#!')) continue;
+    const comment = trimmed.match(/^(?:\/\/|#|\/\*|\*)\s*(.*)$/);
+    if (!comment) continue;
+    const body = comment[1]
+      .replace(/\*\/\s*$/, '')
+      .replace(/^[-=*]+\s*/, '')
+      .trim();
+    if (body) return body;
+  }
+  return '';
+}
+
+/**
+ * 工具目录只读扫描：列出脚本文件，摘要优先取 README 对应段落，
+ * 其次取脚本头部注释；不执行脚本，也不读取目录外文件。
+ */
+function scanTools(rootInput) {
+  const root = path.resolve(String(rootInput || defaultPaths().toolsPath));
+  if (isProtectedPath(root)) {
+    return { ok: false, root, missing: false, entries: [], error: '受保护的引擎目录不可扫描' };
+  }
+  if (!statOf(root).dir) {
+    return { ok: true, root, missing: true, entries: [], error: '' };
+  }
+  const docs = parseToolDocs(readText(path.join(root, 'README.md'), 64 * 1024));
+  let files = [];
+  try {
+    files = fs.readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isFile());
+  } catch (error) {
+    return { ok: false, root, missing: false, entries: [], error: String(error.message || error) };
+  }
+
+  const entries = files
+    .filter((entry) => TOOL_SCRIPT_EXTS.has(path.extname(entry.name).toLowerCase()))
+    .map((entry) => {
+      const file = path.join(root, entry.name);
+      let size = 0;
+      let modified = 0;
+      let summary = '';
+      try {
+        const stat = fs.statSync(file);
+        size = stat.size;
+        modified = stat.mtimeMs;
+        const doc = docs.get(entry.name.toLowerCase());
+        summary = doc?.summary || toolHeadSummary(readText(file, 8 * 1024));
+      } catch {
+        return null;
+      }
+      const doc = docs.get(entry.name.toLowerCase());
+      return {
+        id: entry.name,
+        name: doc?.name || entry.name,
+        summary,
+        ext: path.extname(entry.name).slice(1).toLowerCase(),
+        size,
+        modified,
+        order: doc?.order ?? Number.MAX_SAFE_INTEGER,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) =>
+      left.order !== right.order ? left.order - right.order : left.id.localeCompare(right.id, 'en'),
+    )
+    .map(({ order: _order, ...entry }) => entry);
+
+  return { ok: true, root, missing: false, entries, error: '' };
 }
 
 function statOf(target) {
@@ -986,12 +1279,12 @@ function runHealthCheck(engineSettings) {
     '缺少日志时，引擎侧的任务与活动不会出现在工作台。',
   );
 
-  const skillIndex = statOf(path.join(paths.dataPath, 'skills', '_索引.md'));
+  const skillIndex = statOf(path.join(paths.dataPath, 'skills', '_index.md'));
   add(
     '核心插件',
     '技能索引',
     skillIndex.file ? 'ok' : 'warn',
-    skillIndex.file ? '已找到 skills/_索引.md' : '未找到技能索引',
+    skillIndex.file ? '已找到 skills/_index.md' : '未找到技能索引',
     '运行一次 DSH 技能扫描后索引会重新生成。',
   );
 
@@ -1200,12 +1493,13 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  mainWindow.webContents.on('console-message', (_event, details) => {
-    const level = typeof details === 'object' && details ? details.level : '';
-    const message = typeof details === 'object' && details ? details.message : String(details);
-    const source = typeof details === 'object' && details ? details.sourceId : '';
-    const line = typeof details === 'object' && details ? details.lineNumber : '';
-    console.log(`[renderer:${level}] ${message} (${source}:${line})`);
+  mainWindow.webContents.on('console-message', (event, level, message) => {
+    // Electron 新版事件把字段挂在 event 上，旧签名仍把 level/message 当参数。
+    const detail = typeof event?.message === 'string' ? event : null;
+    const text = detail ? detail.message : message;
+    const label = detail ? detail.level : level;
+    const where = detail ? `${detail.sourceId ?? ''}:${detail.lineNumber ?? ''}` : '';
+    console.log(`[renderer:${label}] ${text} ${where}`.trim());
   });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     console.error('[renderer] process gone', details);
@@ -1237,14 +1531,24 @@ function createWindow() {
   }
 
   if (screenshotTarget) {
+    // 截图窗口需要真正在前台绘制，否则被遮挡时会拿到冻结的旧帧。
+    mainWindow.webContents.setBackgroundThrottling(false);
     mainWindow.show();
+    mainWindow.setAlwaysOnTop(true, 'screen-saver');
+    mainWindow.focus();
+    mainWindow.moveTop();
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
         try {
+          mainWindow.show();
+          mainWindow.focus();
+          mainWindow.moveTop();
           if (captureScript) {
             await mainWindow.webContents.executeJavaScript(captureScript);
             await new Promise((resolve) => setTimeout(resolve, 900));
           }
+          mainWindow.webContents.invalidate();
+          await new Promise((resolve) => setTimeout(resolve, 300));
           const image = await mainWindow.webContents.capturePage();
           const target = path.resolve(process.cwd(), screenshotTarget);
           fs.writeFileSync(target, image.toPNG());
@@ -1258,6 +1562,170 @@ function createWindow() {
     });
   }
 }
+
+// ── 战术大屏（外部项目）资源托管 ─────────────────────────────────────────
+// 来源 cyberdaddyleo/agent-display，PolyForm Noncommercial 许可。
+// 文件只落在用户数据目录，不并入仓库；LICENSE 与大屏页面一起保存。
+const { patchAgentDisplay, PATCH_TAG } = require('./agent-display-patch.cjs');
+const AGENT_DISPLAY_REPO = 'cyberdaddyleo/agent-display';
+const AGENT_DISPLAY_MAX_BYTES = 8 * 1024 * 1024;
+const AGENT_DISPLAY_SOURCES = [
+  {
+    url: `https://api.github.com/repos/${AGENT_DISPLAY_REPO}/contents/index.html`,
+    headers: { Accept: 'application/vnd.github.raw', 'User-Agent': 'dsh-workbench' },
+  },
+  {
+    url: `https://raw.githubusercontent.com/${AGENT_DISPLAY_REPO}/main/index.html`,
+    headers: { 'User-Agent': 'dsh-workbench' },
+  },
+];
+const AGENT_DISPLAY_LICENSE_SOURCE = {
+  url: `https://api.github.com/repos/${AGENT_DISPLAY_REPO}/contents/LICENSE`,
+  headers: { Accept: 'application/vnd.github.raw', 'User-Agent': 'dsh-workbench' },
+};
+
+function agentDisplayDir() {
+  return path.join(app.getPath('userData'), 'assets', 'agent-display');
+}
+
+function agentDisplayFile() {
+  return path.join(agentDisplayDir(), 'index.html');
+}
+
+function agentDisplayStatus(error) {
+  const file = agentDisplayFile();
+  try {
+    const stat = fs.statSync(file);
+    return {
+      ok: true,
+      path: file,
+      url: pathToFileURL(file).href,
+      size: stat.size,
+      updatedAt: stat.mtimeMs,
+    };
+  } catch {
+    return { ok: false, path: file, error: error || '本地还没有安装战术大屏' };
+  }
+}
+
+function downloadText(url, headers, limit, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers, timeout: 30000 }, (res) => {
+      const status = res.statusCode ?? 0;
+      if (status >= 300 && status < 400 && res.headers.location && redirects < 3) {
+        res.resume();
+        resolve(
+          downloadText(new URL(res.headers.location, url).href, headers, limit, redirects + 1),
+        );
+        return;
+      }
+      if (status !== 200) {
+        res.resume();
+        reject(new Error(`HTTP ${status}`));
+        return;
+      }
+      const chunks = [];
+      let size = 0;
+      res.on('data', (chunk) => {
+        size += chunk.length;
+        if (size > limit) {
+          req.destroy(new Error('资源超过大小上限'));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      res.on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new Error('下载超时')));
+    req.on('error', reject);
+  });
+}
+
+/** 校验并落到用户数据目录；只接受真正的大屏页面。 */
+function storeAgentDisplay(body) {
+  if (!body || body.length < 100000 || !/<html[\s>]/i.test(body) || !/agent-series-theme/.test(body)) {
+    throw new Error('文件看起来不是 Agent 战术大屏的 index.html');
+  }
+  fs.mkdirSync(agentDisplayDir(), { recursive: true });
+  // 上游原样留一份，运行时加载的是打了数据桥补丁的衍生页；更新时重新生成。
+  fs.writeFileSync(path.join(agentDisplayDir(), 'index.upstream.html'), body);
+  const tmp = `${agentDisplayFile()}.tmp`;
+  fs.writeFileSync(tmp, patchAgentDisplay(body));
+  fs.renameSync(tmp, agentDisplayFile());
+}
+
+/** 旧安装（补丁版本落后或缺失）就地补一次；始终以未改动的上游文件为底重新生成。 */
+function ensureAgentDisplayPatch() {
+  const file = agentDisplayFile();
+  if (!fs.existsSync(file)) return;
+  const html = fs.readFileSync(file, 'utf8');
+  if (html.includes(PATCH_TAG)) return;
+  const upstream = path.join(agentDisplayDir(), 'index.upstream.html');
+  const base = fs.existsSync(upstream) ? fs.readFileSync(upstream, 'utf8') : html;
+  if (!fs.existsSync(upstream)) fs.writeFileSync(upstream, base);
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, patchAgentDisplay(base));
+  fs.renameSync(tmp, file);
+}
+
+async function downloadAgentDisplay() {
+  let lastError = '';
+  for (const source of AGENT_DISPLAY_SOURCES) {
+    try {
+      const body = await downloadText(source.url, source.headers, AGENT_DISPLAY_MAX_BYTES);
+      storeAgentDisplay(body);
+      try {
+        const license = await downloadText(
+          AGENT_DISPLAY_LICENSE_SOURCE.url,
+          AGENT_DISPLAY_LICENSE_SOURCE.headers,
+          64 * 1024,
+        );
+        fs.writeFileSync(path.join(agentDisplayDir(), 'LICENSE'), license);
+      } catch {
+        /* 许可文件下载失败不阻塞大屏使用 */
+      }
+      return agentDisplayStatus();
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  return {
+    ...agentDisplayStatus(`大屏资源下载失败：${lastError || '网络不可达'}`),
+    error: `大屏资源下载失败：${lastError || '网络不可达'}`,
+  };
+}
+
+ipcMain.handle('agent-display:status', () => agentDisplayStatus());
+ipcMain.handle('agent-display:ensure', async () => {
+  const current = agentDisplayStatus();
+  if (!current.ok) return downloadAgentDisplay();
+  ensureAgentDisplayPatch();
+  return agentDisplayStatus();
+});
+ipcMain.handle('agent-display:reinstall', () => downloadAgentDisplay());
+ipcMain.handle('agent-display:import', async () => {
+  const picked = await dialog.showOpenDialog({
+    title: '选择 agent-display 的 index.html',
+    filters: [{ name: 'HTML 页面', extensions: ['html', 'htm'] }],
+    properties: ['openFile'],
+  });
+  if (picked.canceled || !picked.filePaths[0]) {
+    return { ok: false, canceled: true, error: '已取消导入' };
+  }
+  try {
+    storeAgentDisplay(fs.readFileSync(picked.filePaths[0], 'utf8'));
+    return agentDisplayStatus();
+  } catch (error) {
+    return { ok: false, error: `导入失败：${error instanceof Error ? error.message : String(error)}` };
+  }
+});
+ipcMain.handle('agent-display:open-external', async () => {
+  const current = agentDisplayStatus();
+  if (!current.ok) return { ok: false, error: current.error };
+  await shell.openExternal(current.url);
+  return { ok: true };
+});
 
 ipcMain.on('window:minimize', () => {
   if (mainWindow) mainWindow.minimize();
@@ -1321,6 +1789,26 @@ ipcMain.handle('engine:restart', () =>
   engineManager ? engineManager.restart() : idleEngineStatus(),
 );
 
+ipcMain.handle('openfilm:status', () =>
+  openfilmManager ? openfilmManager.snapshot() : idleOpenfilmStatus(),
+);
+
+ipcMain.handle('openfilm:ensure', () =>
+  openfilmManager ? openfilmManager.ensure() : idleOpenfilmStatus(),
+);
+
+ipcMain.handle('openfilm:open-project', (_event, folder) =>
+  openfilmManager ? openfilmManager.openProject(folder) : idleOpenfilmStatus(),
+);
+
+ipcMain.handle('openfilm:choose-project', () =>
+  openfilmManager ? openfilmManager.chooseProject() : { canceled: true },
+);
+
+ipcMain.handle('openfilm:open-external', (_event, url) =>
+  openfilmManager ? openfilmManager.openExternal(url) : { ok: false, error: 'Studio 尚未初始化' },
+);
+
 ipcMain.handle('health:check', (_event, engineSettings) => {
   try {
     return runHealthCheck(engineSettings);
@@ -1341,6 +1829,54 @@ ipcMain.handle('health:check', (_event, engineSettings) => {
       versions: {},
     };
   }
+});
+
+// 神经元联动的轻量事件通道：只读 events/ 下已扫描的两种日志，不扩大读取范围。
+ipcMain.handle('engine:events', (_event, rootInput) => {
+  try {
+    const root = path.resolve(String(rootInput || defaultPaths().dataPath));
+    return {
+      ok: true,
+      root,
+      readAt: Date.now(),
+      events: tailJsonl(path.join(root, 'events', 'events.jsonl'), 60),
+      dispatches: tailJsonl(path.join(root, 'events', 'dispatch.jsonl'), 40),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      root: String(rootInput || ''),
+      readAt: Date.now(),
+      events: [],
+      dispatches: [],
+      error: String(error.message || error),
+    };
+  }
+});
+
+// 派单记录：按天向插件取单，批量请求减少 IPC 往返；只读，失败不影响本地视图。
+ipcMain.handle('dispatch:feed', async (_event, daysInput) => {
+  const days = (Array.isArray(daysInput) ? daysInput : [daysInput])
+    .map((day) => String(day || '').trim())
+    .filter((day, index, list) => ORDER_DAY.test(day) && list.indexOf(day) === index)
+    .slice(0, 14);
+  if (days.length === 0) {
+    return { ok: false, readAt: Date.now(), days: [], orders: [], error: '日期格式不正确' };
+  }
+  const results = await Promise.all(days.map((day) => fetchDispatchFeed(day)));
+  return {
+    ok: results.some((result) => result.ok),
+    readAt: Date.now(),
+    days: results.map((result) => ({
+      day: result.day,
+      ok: result.ok,
+      count: result.orders.length,
+      error: result.error,
+    })),
+    orders: results.flatMap((result) => result.orders),
+    thresholds: results.find((result) => result.thresholds)?.thresholds ?? null,
+    error: results.find((result) => result.error)?.error,
+  };
 });
 
 ipcMain.handle('engine:scan', (_event, root) => {
@@ -1414,9 +1950,9 @@ ipcMain.handle('fs:list', (_event, payload) => {
     return { ok: false, error: '受保护的引擎目录不可浏览', entries: [] };
   }
   try {
+    // 点目录也列出来（例如 .dsh），但受保护目录只显示名字，不许进入或预览。
     const entries = fs
       .readdirSync(target, { withFileTypes: true })
-      .filter((entry) => !entry.name.startsWith('.'))
       .map((entry) => {
         const full = path.join(target, entry.name);
         let size = 0;
@@ -1434,6 +1970,8 @@ ipcMain.handle('fs:list', (_event, payload) => {
           size,
           modified,
           ext: entry.isFile() ? path.extname(entry.name).slice(1).toLowerCase() : '',
+          protected: isProtectedPath(full),
+          hidden: entry.name.startsWith('.'),
         };
       })
       .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name, 'zh') : a.type === 'dir' ? -1 : 1))
@@ -1498,8 +2036,117 @@ ipcMain.handle('fs:preview', (_event, payload) => {
   }
 });
 
-ipcMain.handle('fs:write', (_event, payload) => {
+/** 风格库默认放在状态目录下，避免把第三方素材并进仓库。 */
+function defaultStyleRoot() {
+  return path.join(stateDir || app.getPath('appData'), 'animation-styles');
+}
+
+function styleLibraryBase(input) {
+  const candidate = path.resolve(String(input || '').trim() || defaultStyleRoot());
+  const nested = path.join(candidate, '风格提示词');
+  if (statOf(nested).dir) return { root: candidate, base: '风格提示词' };
+  if (path.basename(candidate) === '风格提示词' && statOf(candidate).dir) {
+    return { root: path.dirname(candidate), base: '风格提示词' };
+  }
+  return { root: candidate, base: '' };
+}
+
+/** 只读扫描风格库：分类子目录下的 .md 与同名静帧，不读正文。 */
+function scanStyleLibrary(input) {
+  const resolved = styleLibraryBase(input);
+  const baseAbs = resolved.base ? path.join(resolved.root, resolved.base) : resolved.root;
+  if (isProtectedPath(baseAbs)) return { ok: false, error: '受保护的引擎目录不可扫描' };
+  if (!statOf(baseAbs).dir) {
+    return { ok: true, root: resolved.root, base: resolved.base, missing: true, total: 0, categories: [], items: [] };
+  }
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(baseAbs, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  } catch (error) {
+    return { ok: false, error: String(error.message || error), root: resolved.root, base: resolved.base, total: 0, categories: [], items: [] };
+  }
+  dirs.sort((a, b) => a.localeCompare(b, 'zh'));
+  const items = [];
+  const categories = [];
+  const stillExts = ['.jpg', '.jpeg', '.png', '.webp'];
+  for (const dir of dirs) {
+    const dirAbs = path.join(baseAbs, dir);
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dirAbs, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    const fileNames = new Set(entries.filter((entry) => entry.isFile()).map((entry) => entry.name));
+    const docs = entries
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
+      .map((entry) => entry.name)
+      .sort((a, b) => a.localeCompare(b, 'zh', { numeric: true }));
+    if (!docs.length) continue;
+    categories.push({ name: dir, count: docs.length });
+    for (const doc of docs) {
+      const stem = doc.slice(0, -3);
+      const underscore = stem.indexOf('_');
+      const id = underscore >= 0 ? stem.slice(0, underscore) : stem;
+      const title = underscore >= 0 ? stem.slice(underscore + 1) : stem;
+      const series = (id.match(/^[A-Za-z]+/) || [id])[0].toUpperCase();
+      const still = stillExts.map((ext) => `${stem}${ext}`).find((name) => fileNames.has(name)) || '';
+      const prefix = resolved.base ? `${resolved.base}/` : '';
+      items.push({
+        key: `${dir}/${stem}`,
+        category: dir,
+        id,
+        title: title || id,
+        series,
+        relative: `${prefix}${dir}/${doc}`,
+        stillRelative: still ? `${prefix}${dir}/${still}` : '',
+      });
+    }
+  }
+  return {
+    ok: true,
+    root: resolved.root,
+    base: resolved.base,
+    missing: false,
+    total: items.length,
+    categories,
+    items,
+  };
+}
+
+ipcMain.handle('styles:scan', (_event, payload) => scanStyleLibrary(payload && payload.root));
+
+const IMAGE_MIME = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+};
+
+/** 风格库静帧只读转 data URL；限制类型与大小，避免把二进制塞进存档。 */
+ipcMain.handle('fs:image', (_event, payload) => {
   const root = payload && payload.root ? path.resolve(String(payload.root)) : '';
+  const target = root ? resolveInside(root, payload.relative || '') : null;
+  if (!root || !target) return { ok: false, error: '路径越界或为空' };
+  if (isProtectedPath(root) || isProtectedPath(target)) {
+    return { ok: false, error: '受保护的引擎文件不可读取' };
+  }
+  const ext = path.extname(target).toLowerCase();
+  const mime = IMAGE_MIME[ext];
+  if (!mime) return { ok: false, error: '只支持 jpg / png / webp / gif 图片' };
+  try {
+    const stat = fs.statSync(target);
+    if (!stat.isFile()) return { ok: false, error: '不是文件' };
+    if (stat.size > 8 * 1024 * 1024) return { ok: false, error: '图片超过 8MB，暂不预览', size: stat.size };
+    const data = fs.readFileSync(target).toString('base64');
+    return { ok: true, size: stat.size, mime, dataUrl: `data:${mime};base64,${data}` };
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) };
+  }
+});
+
+ipcMain.handle('fs:write', (_event, payload) => {  const root = payload && payload.root ? path.resolve(String(payload.root)) : '';
   const target = root ? resolveInside(root, payload.relative || '') : null;
   if (!root || !target) return { ok: false, error: '路径越界或为空' };
   if (payload.relative === '.' || payload.relative === '') {
@@ -1521,9 +2168,109 @@ ipcMain.handle('fs:write', (_event, payload) => {
   }
 });
 
+/** 新建条目只接受单个名字：不能带分隔符、盘符、结尾点或 Windows 保留名。 */
+function newEntryName(value) {
+  const text = String(value || '').trim();
+  if (!text || text === '.' || text === '..' || text.length > 120) return '';
+  if (/[\\/:*?"<>|]/.test(text)) return '';
+  if (/[. ]$/.test(text)) return '';
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(text)) return '';
+  return text;
+}
+
+/** 统一校验新建条目的父目录与目标路径，返回相对路径供界面刷新。 */
+function resolveNewEntry(payload) {
+  const root = payload && payload.root ? path.resolve(String(payload.root)) : '';
+  const base = root ? resolveInside(root, (payload && payload.relative) || '.') : null;
+  const name = newEntryName(payload && payload.name);
+  if (!root || !base) return { error: '路径越界或为空' };
+  if (!name) return { error: '名称不合法：不能包含 \\ / : * ? " < > |，也不能以点或空格结尾' };
+  if (isProtectedPath(root) || isProtectedPath(base)) return { error: '受保护的引擎目录不可写入' };
+  const target = resolveInside(base, name);
+  if (!target) return { error: '路径越界或为空' };
+  if (isProtectedPath(target)) return { error: '受保护的引擎目录不可写入' };
+  try {
+    if (!fs.statSync(base).isDirectory()) return { error: '当前路径不是目录' };
+  } catch {
+    return { error: '父目录不存在或不可访问' };
+  }
+  if (fs.existsSync(target)) return { error: '同名条目已存在' };
+  return {
+    root,
+    target,
+    relative: path.relative(root, target).split(path.sep).join('/'),
+  };
+}
+
+ipcMain.handle('fs:mkdir', (_event, payload) => {
+  const resolved = resolveNewEntry(payload);
+  if (resolved.error) return { ok: false, error: resolved.error };
+  try {
+    fs.mkdirSync(resolved.target);
+    return { ok: true, relative: resolved.relative };
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) };
+  }
+});
+
+ipcMain.handle('fs:create', (_event, payload) => {
+  const resolved = resolveNewEntry(payload);
+  if (resolved.error) return { ok: false, error: resolved.error };
+  try {
+    // wx：目标已存在就失败，避免误覆盖。
+    fs.writeFileSync(resolved.target, '', { encoding: 'utf8', flag: 'wx' });
+    return { ok: true, relative: resolved.relative, size: 0 };
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) };
+  }
+});
+
+ipcMain.handle('fs:remove', (_event, payload) => {
+  const root = payload && payload.root ? path.resolve(String(payload.root)) : '';
+  const relative = payload && typeof payload.relative === 'string' ? payload.relative : '';
+  if (!root || !relative || relative === '.' || relative === './') {
+    return { ok: false, error: '不能删除浏览根目录' };
+  }
+  const target = resolveInside(root, relative);
+  if (!target) return { ok: false, error: '路径越界或为空' };
+  if (isProtectedPath(root) || isProtectedPath(target)) {
+    return { ok: false, error: '受保护的引擎条目不可删除' };
+  }
+  if (path.resolve(target) === path.resolve(root)) {
+    return { ok: false, error: '不能删除浏览根目录' };
+  }
+  try {
+    const stat = fs.lstatSync(target);
+    if (stat.isDirectory()) {
+      fs.rmSync(target, { recursive: true, force: false });
+    } else {
+      fs.unlinkSync(target);
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) };
+  }
+});
+
 ipcMain.handle('engine:doc-read', (_event, payload) =>
   readEngineDoc(payload && payload.root, payload && payload.relative),
 );
+
+ipcMain.handle('engine:order-doc', (_event, payload) =>
+  readEngineOrder(
+    payload && payload.root,
+    payload && payload.day,
+    payload && payload.orderId,
+    payload && payload.agent,
+  ),
+);
+
+ipcMain.handle('engine:open-path', async (_event, payload) => {
+  const found = engineOpenTarget(payload && payload.root, payload && payload.relative);
+  if (!found) return { ok: false, error: '该路径不在可打开的引擎白名单内' };
+  const error = await shell.openPath(found.target);
+  return error ? { ok: false, error } : { ok: true };
+});
 
 ipcMain.handle('engine:doc-write', (_event, payload) =>
   writeEngineDoc(payload && payload.root, payload && payload.relative, payload && payload.text),
@@ -1533,6 +2280,7 @@ ipcMain.handle('engine:skills', (_event, root) => scanSkills(root));
 ipcMain.handle('engine:skill-doc', (_event, payload) =>
   readSkillDoc(payload && payload.root, payload && payload.id),
 );
+ipcMain.handle('tools:scan', (_event, root) => scanTools(root));
 
 ipcMain.handle('terminal:shells', () => detectTerminalShells());
 ipcMain.handle('terminal:start', (event, payload) => terminalStart(event, payload));
@@ -1591,6 +2339,13 @@ if (!captureMode && !app.requestSingleInstanceLock()) {
     const stored = readJson(stateFilePath());
     if (stored?.settings?.workbench?.closeToTray === false) closeToTray = false;
     engineManager = createManagedEngine(resolveEnginePaths(stored?.settings?.engine));
+    openfilmManager = createOpenfilmManager({
+      onUpdate: (snapshot) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('openfilm:status', snapshot);
+        }
+      },
+    });
     createWindow();
     createTray();
     void engineManager.start();
@@ -1604,6 +2359,7 @@ if (!captureMode && !app.requestSingleInstanceLock()) {
     isQuitting = true;
     killAllTerminals();
     engineManager?.quit();
+    openfilmManager?.quit();
   });
 
   app.on('window-all-closed', () => {

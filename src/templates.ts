@@ -32,7 +32,7 @@ export interface SessionConfig {
   color: string;
   icon: IconName;
   modules: string[];
-  /** 打开该场景 DSH 时自动跳转的 Harness 会话。 */
+  /** 打开该会话 DSH 时自动跳转的 Harness 会话。 */
   harness: HarnessBinding | null;
 }
 
@@ -76,7 +76,8 @@ export const SESSION_ICONS: IconName[] = [
   'wave',
 ];
 
-const PALETTE = [
+/** 会话标识色：前八个是内置模板常用色，后面补足冷暖跨度，供新建与编辑时挑选。 */
+export const SESSION_PALETTE = [
   '#3bdeea',
   '#8f80ff',
   '#f6b64c',
@@ -85,7 +86,17 @@ const PALETTE = [
   '#5aa9ff',
   '#ff8f6b',
   '#b6d66b',
+  '#ff4d5e',
+  '#fb923c',
+  '#ffd24a',
+  '#7bf1a8',
+  '#38bdf8',
+  '#a78bfa',
+  '#f472b6',
+  '#94a3b8',
 ];
+
+const PALETTE = SESSION_PALETTE;
 
 const BASE_MODULES = ['session.chat'];
 
@@ -161,6 +172,20 @@ const builtinTemplates: SessionTemplate[] = [
     tags: ['记忆', '知识'],
   },
   {
+    id: 'builtin-video',
+    name: '视频剪辑',
+    description: '代码化成片：agent 写 film.html 与分镜页，工作台内嵌 OpenFilm Studio 精修，ffmpeg 渲染；适合技术介绍、产品演示与信息型短片。',
+    role: 'Director · 视频制作',
+    scene: '视频',
+    model: 'DSH 引擎',
+    color: '#e468d4',
+    icon: 'monitor',
+    summary: '负责从脚本、分镜、配音到合成渲染的整条流水线，素材与成片留在会话目录，风格配方沉淀进长期记忆。',
+    modules: ['neuron.view', 'openfilm.editor', 'files.browser', 'web.search', 'terminal.console', 'memory.search', 'todo.list', ...BASE_MODULES],
+    source: 'builtin',
+    tags: ['视频', 'OpenFilm', '剪辑'],
+  },
+  {
     id: 'builtin-blank',
     name: '空白会话',
     description: '只保留 DSH 引擎，其余模块按需在模块抽屉里启用。',
@@ -205,7 +230,7 @@ function engineModules(scene: EngineSnapshot['scenes'][number]): string[] {
   return [...modules, ...BASE_MODULES];
 }
 
-/** 内置模板 + 自定义模板 + 引擎场景模板；引擎不可用时只返回本地模板。 */
+/** 内置模板 + 自定义模板 + 引擎会话模板；引擎不可用时只返回本地模板。 */
 export function buildTemplates(
   engine: EngineSnapshot | null,
   customTemplates: SessionTemplate[] = [],
@@ -217,12 +242,12 @@ export function buildTemplates(
       scene.responsibilities[0] ||
       scene.summaryText ||
       `${scene.panels.length} 个面板 · ${scene.memoryCount} 份记忆`,
-    role: scene.mission ? scene.mission.replace(/\s+/g, ' ').slice(0, 34) : `${scene.group || '引擎'} · 场景角色`,
+    role: scene.mission ? scene.mission.replace(/\s+/g, ' ').slice(0, 34) : `${scene.group || '引擎'} · 会话角色`,
     scene: scene.group || '引擎',
     model: 'DSH Engine · 只读',
     color: PALETTE[index % PALETTE.length],
     icon: sceneIcon(scene.name, scene.group),
-    summary: scene.mission || scene.summaryText || `${scene.name} 引擎场景，点击可查看记忆与技能索引。`,
+    summary: scene.mission || scene.summaryText || `${scene.name} 引擎会话，点击可查看记忆与技能索引。`,
     modules: engineModules(scene),
     source: 'engine',
     engineSceneId: scene.id,
@@ -257,7 +282,7 @@ export function templateFromConfig(
   return {
     id: id ?? `custom-${Date.now().toString(36)}-${templateSequence}`,
     name: config.name.trim() || base?.name || '未命名模板',
-    description: base?.description || `${config.scene || '自定义'}场景 · ${config.modules.length} 个模块`,
+    description: base?.description || `${config.scene || '自定义'}会话 · ${config.modules.length} 个模块`,
     role: config.role.trim() || base?.role || 'Worker · 自定义角色',
     scene: config.scene.trim() || base?.scene || '自定义',
     model: config.model.trim() || base?.model || 'DSH 引擎',
@@ -267,7 +292,7 @@ export function templateFromConfig(
     modules: [...config.modules],
     harness: config.harness ?? base?.harness ?? null,
     source: 'custom',
-    tags: base?.tags?.length ? base.tags : ['自定义', config.scene || '场景'],
+    tags: base?.tags?.length ? base.tags : ['自定义', config.scene || '会话'],
   };
 }
 

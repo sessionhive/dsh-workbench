@@ -46,7 +46,7 @@ const EMPTY: TerminalSnapshot = {
   configKey: '',
 };
 
-/** 运行时实例按盒子存在，切换中枢台/场景桌面或折叠盒子都不会销毁 shell。 */
+/** 运行时实例按盒子存在，切换中枢台/会话桌面或折叠盒子都不会销毁 shell。 */
 const runtimes = new Map<string, TerminalRuntimeInternal>();
 let ipcBound = false;
 
@@ -265,7 +265,7 @@ export function disposeTerminalRuntime(key: string) {
   else kill();
 }
 
-/** 删除场景时收掉它名下所有终端 shell，避免进程留在后台。 */
+/** 删除会话时收掉它名下所有终端 shell，避免进程留在后台。 */
 export function disposeSessionTerminals(sessionId: string) {
   for (const runtime of [...runtimes.values()]) {
     if (runtime.key.startsWith(`${sessionId}:`)) disposeTerminalRuntime(runtime.key);

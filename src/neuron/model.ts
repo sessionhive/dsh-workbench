@@ -1,7 +1,8 @@
+import { agentPathsOf } from '../engine/scene';
 import type { EngineSnapshot } from '../engine/types';
 import type { RoleId, Session } from '../types';
 
-export type NeuronKind = 'core' | 'scene' | 'memory' | 'skill' | 'event';
+export type NeuronKind = 'core' | 'scene' | 'card' | 'skill' | 'memory' | 'event';
 
 export interface NeuronNode {
   id: string;
@@ -17,12 +18,14 @@ export interface NeuronNode {
   detail?: string;
   tags?: string[];
   path?: string;
+  /** 会话下方的分类节点（角色卡 / 技能 / 今日记忆），用于区分叶子节点。 */
+  role?: 'group';
 }
 
 export interface NeuronEdge {
   a: string;
   b: string;
-  kind: 'core' | 'memory' | 'skill' | 'event';
+  kind: 'core' | 'card' | 'memory' | 'skill' | 'event';
 }
 
 export interface NeuronStats {
@@ -31,6 +34,7 @@ export interface NeuronStats {
   scenes: number;
   memories: number;
   skills: number;
+  cards: number;
   mode: 'engine' | 'local';
 }
 
@@ -42,6 +46,9 @@ export interface NeuronModel {
 
 const PALETTE = ['#38e1e6', '#8f80ff', '#f6b64c', '#3ee0a3', '#e468d4', '#5aa9ff', '#ff8f6b', '#b6d66b'];
 const CORE_ID = 'core';
+const TAU = Math.PI * 2;
+const GROUP_DISTANCE = 0.25;
+const LEAF_DISTANCE = 0.13;
 
 function hash(input: string) {
   let value = 2166136261;
@@ -65,6 +72,58 @@ function short(text: string, limit = 120) {
   return clean.length > limit ? `${clean.slice(0, limit)}…` : clean;
 }
 
+function unit(vector: [number, number, number]): [number, number, number] {
+  const length = Math.hypot(vector[0], vector[1], vector[2]) || 1;
+  return [vector[0] / length, vector[1] / length, vector[2] / length];
+}
+
+/** 以会话到中心的径向为轴，给三个分支节点布置一个稳定的三脚架坐标系。 */
+function sceneFrame(position: [number, number, number]) {
+  const radial = unit(
+    position[0] === 0 && position[1] === 0 && position[2] === 0 ? [0, 1, 0] : position,
+  );
+  const up: [number, number, number] = Math.abs(radial[1]) > 0.92 ? [1, 0, 0] : [0, 1, 0];
+  const tangent = unit([
+    up[1] * radial[2] - up[2] * radial[1],
+    up[2] * radial[0] - up[0] * radial[2],
+    up[0] * radial[1] - up[1] * radial[0],
+  ]);
+  const bitangent = unit([
+    radial[1] * tangent[2] - radial[2] * tangent[1],
+    radial[2] * tangent[0] - radial[0] * tangent[2],
+    radial[0] * tangent[1] - radial[1] * tangent[0],
+  ]);
+  return { radial, tangent, bitangent };
+}
+
+function branchPos(
+  origin: [number, number, number],
+  frame: ReturnType<typeof sceneFrame>,
+  angle: number,
+  distance: number,
+  lift = 0.12,
+): [number, number, number] {
+  const cos = Math.cos(angle) * distance;
+  const sin = Math.sin(angle) * distance;
+  return [
+    origin[0] + frame.radial[0] * lift + frame.tangent[0] * cos + frame.bitangent[0] * sin,
+    origin[1] + frame.radial[1] * lift + frame.tangent[1] * cos + frame.bitangent[1] * sin,
+    origin[2] + frame.radial[2] * lift + frame.tangent[2] * cos + frame.bitangent[2] * sin,
+  ];
+}
+
+/** 本地日期键，与引擎 memory/<YYYY-MM-DD>/ 目录保持一致。 */
+function todayKey() {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+function fileLabel(file: string) {
+  const base = file.split('/').pop() || file;
+  return base.replace(/\.[^.]+$/, '') || base;
+}
+
 export function buildNeuronModel(
   sessions: Session[],
   engine: EngineSnapshot | null,
@@ -73,7 +132,7 @@ export function buildNeuronModel(
   const nodes: NeuronNode[] = [
     {
       id: CORE_ID,
-      label: 'DSH 记忆',
+      label: 'DSH中枢',
       kind: 'core',
       color: '#7fe3ff',
       size: 1.55,
@@ -88,6 +147,7 @@ export function buildNeuronModel(
   const sceneNodes: NeuronNode[] = [];
   const localScenes = sessions.filter((session) => session.id !== 'hub');
   const usedSessionIds = new Set<string>();
+  const today = todayKey();
 
   const sceneColor = (sceneId: string) => {
     const local = sessions.find(
@@ -115,7 +175,7 @@ export function buildNeuronModel(
         sessionId: local?.id,
         group: scene.group,
         meta: `${scene.memoryCount} 记忆 · ${scene.skillCount} 技能`,
-        detail: short(scene.mission || scene.summaryText || '该场景暂无摘要。', 180),
+        detail: short(scene.mission || scene.summaryText || '该会话暂无摘要。', 180),
         tags: [scene.skill, scene.primarySessionId ? '已绑定会话' : '未绑定会话'].filter(Boolean),
         path: scene.memoryRoot,
       };
@@ -123,52 +183,118 @@ export function buildNeuronModel(
       sceneNodes.push(node);
       edges.push({ a: CORE_ID, b: node.id, kind: 'core' });
 
+      const frame = sceneFrame(node.pos);
+      const shared = {
+        sceneId: scene.id,
+        sessionId: local?.id,
+        group: scene.group,
+      };
+
+      // 角色卡：直接挂在会话下，承载角色、职责与状态。
       if (!onlyMemory) {
-        scene.skillFiles.slice(0, 4).forEach((file, skillIndex) => {
+        const cardPaths = agentPathsOf(scene);
+        const card: NeuronNode = {
+          id: `card-${scene.id}`,
+          label: '角色卡',
+          kind: 'card',
+          color: '#f0c674',
+          size: 0.62,
+          pos: branchPos(node.pos, frame, -Math.PI / 2, GROUP_DISTANCE, 0.16),
+          ...shared,
+          role: 'group',
+          meta: `${scene.name} · ${scene.status || '角色'}`,
+          detail: short(
+            scene.mission ||
+              scene.responsibilities.join('；') ||
+              scene.summaryText ||
+              '该会话暂无角色卡描述。',
+            180,
+          ),
+          tags: [scene.status, ...scene.responsibilities.slice(0, 2)].filter(Boolean),
+          path: cardPaths.card,
+        };
+        nodes.push(card);
+        edges.push({ a: node.id, b: card.id, kind: 'card' });
+
+        // 技能：先给分类节点，再挂具体技能文件。
+        const skillGroup: NeuronNode = {
+          id: `skill-group-${scene.id}`,
+          label: '技能',
+          kind: 'skill',
+          color: '#6f8fd6',
+          size: 0.58,
+          pos: branchPos(node.pos, frame, (Math.PI * 7) / 6, GROUP_DISTANCE, 0.1),
+          ...shared,
+          role: 'group',
+          meta: `${scene.skillCount} 个技能文件`,
+          detail: scene.skill ? `skills/${scene.skill}` : '该会话未配置技能目录。',
+          path: scene.skill ? `skills/${scene.skill}` : undefined,
+        };
+        nodes.push(skillGroup);
+        edges.push({ a: node.id, b: skillGroup.id, kind: 'skill' });
+
+        scene.skillFiles.slice(0, 3).forEach((file, skillIndex, list) => {
           const id = `skill-${scene.id}-${file}`;
-          const angle = (skillIndex / 4) * Math.PI * 2 + hash(id) * 1.4;
-          nodes.push({
+          const angle = (skillIndex / Math.max(1, list.length)) * TAU + hash(id) * 0.7;
+          const leaf: NeuronNode = {
             id,
-            label: file.split('/').pop()?.replace(/\.[^.]+$/, '') || file,
+            label: fileLabel(file),
             kind: 'skill',
-            color: '#6f8fd6',
-            size: 0.5,
-            pos: [
-              node.pos[0] + Math.cos(angle) * 0.22,
-              node.pos[1] + 0.18 + Math.sin(angle) * 0.08,
-              node.pos[2] + Math.sin(angle) * 0.22,
-            ],
+            color: '#8fb0ff',
+            size: 0.4,
+            pos: branchPos(skillGroup.pos, frame, angle, LEAF_DISTANCE, 0.03),
             sceneId: scene.id,
-            meta: '技能文件',
+            sessionId: local?.id,
+            meta: `${scene.name} · 技能`,
             detail: file,
             path: `skills/${scene.skill}/${file}`,
-          });
-          edges.push({ a: node.id, b: id, kind: 'skill' });
+          };
+          nodes.push(leaf);
+          edges.push({ a: skillGroup.id, b: id, kind: 'skill' });
         });
       }
 
-      const memoryFiles = scene.memoryFiles.slice(0, onlyMemory ? 8 : 5);
-      memoryFiles.forEach((file, memoryIndex) => {
+      // 今日记忆：只投影当天日期目录下的文件，没有写入时保留空分支。
+      const todayFiles = scene.memoryFiles
+        .filter((file) => file.startsWith(`${today}/`) && !/(^|\/)INDEX\.md$/i.test(file))
+        .slice(0, 4);
+      const memoryGroup: NeuronNode = {
+        id: `memory-group-${scene.id}`,
+        label: '今日记忆',
+        kind: 'memory',
+        color: '#cfd9ff',
+        size: 0.58,
+        pos: branchPos(node.pos, frame, (Math.PI * 11) / 6, GROUP_DISTANCE, 0.1),
+        ...shared,
+        role: 'group',
+        meta: todayFiles.length > 0 ? `${today} · ${todayFiles.length} 条` : `${today} · 暂无写入`,
+        detail:
+          todayFiles.length > 0
+            ? `今天写入的 ${todayFiles.length} 条记忆。`
+            : '今天还没有新的记忆文件，空白分支会保留到当天有写入为止。',
+        path: todayFiles.length > 0 ? `${scene.memoryRoot}/memory/${today}` : undefined,
+      };
+      nodes.push(memoryGroup);
+      edges.push({ a: node.id, b: memoryGroup.id, kind: 'memory' });
+
+      todayFiles.forEach((file, memoryIndex, list) => {
         const id = `memory-${scene.id}-${file}`;
-        const angle = (memoryIndex / Math.max(1, memoryFiles.length)) * Math.PI * 2;
-        const spread = 0.16 + hash(id) * 0.12;
-        nodes.push({
+        const angle = (memoryIndex / Math.max(1, list.length)) * TAU + hash(id) * 0.7;
+        const leaf: NeuronNode = {
           id,
-          label: file.split('/').pop()?.replace(/\.[^.]+$/, '') || file,
+          label: fileLabel(file),
           kind: 'memory',
           color: '#dfe7ff',
-          size: 0.44,
-          pos: [
-            node.pos[0] + Math.cos(angle) * spread,
-            node.pos[1] + (hash(`${id}y`) - 0.5) * 0.24,
-            node.pos[2] + Math.sin(angle) * spread,
-          ],
+          size: 0.42,
+          pos: branchPos(memoryGroup.pos, frame, angle, LEAF_DISTANCE, 0.03),
           sceneId: scene.id,
-          meta: `${scene.name} · 记忆`,
+          sessionId: local?.id,
+          meta: `${scene.name} · 今日记忆`,
           detail: file,
           path: `${scene.memoryRoot}/memory/${file}`.replace(/\/+/g, '/'),
-        });
-        edges.push({ a: node.id, b: id, kind: 'memory' });
+        };
+        nodes.push(leaf);
+        edges.push({ a: memoryGroup.id, b: id, kind: 'memory' });
       });
     });
   }
@@ -186,7 +312,7 @@ export function buildNeuronModel(
         pos: orbit(index, list.length, engine?.ok ? 1.16 : 0.78, Math.PI / 8),
         sessionId: session.id,
         group: session.scene,
-        meta: `${session.role} · ${session.model}`,
+        meta: `${session.scene} · ${session.model}`,
         detail: session.summary,
         tags: [session.status, ...session.modules.filter((item) => item.enabled).slice(0, 2).map((item) => item.moduleId)],
       };
@@ -231,8 +357,9 @@ export function buildNeuronModel(
       nodes: nodes.length,
       edges: edges.length,
       scenes: nodes.filter((node) => node.kind === 'scene').length,
-      memories: nodes.filter((node) => node.kind === 'memory').length,
-      skills: nodes.filter((node) => node.kind === 'skill').length,
+      memories: nodes.filter((node) => node.kind === 'memory' && node.role !== 'group').length,
+      skills: nodes.filter((node) => node.kind === 'skill' && node.role !== 'group').length,
+      cards: nodes.filter((node) => node.kind === 'card').length,
       mode: engine?.ok ? 'engine' : 'local',
     },
   };

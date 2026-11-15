@@ -108,7 +108,7 @@ export function resolveBoardOverlaps(
 }
 
 /**
- * 场景桌面网格：12 列、固定行高，拖动吸附、右下角缩放、碰撞向下的推。
+ * 会话桌面网格：12 列、固定行高，拖动吸附、右下角缩放、碰撞向下的推。
  * 不使用绝对像素坐标，窗口变化时只重新换算列宽。
  */
 export function SceneBoard({ tiles, setTiles, renderTile, onCloseTile, className }: SceneBoardProps) {

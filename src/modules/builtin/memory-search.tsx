@@ -52,14 +52,14 @@ function byName(a: MemoryFile, b: MemoryFile) {
   return a.file.localeCompare(b.file, 'zh-CN', { numeric: true, sensitivity: 'base' });
 }
 
-/** 记忆检索：按场景 → 目录 → 文件浏览 memory，只读渲染 Markdown。 */
+/** 记忆检索：按会话 → 目录 → 文件浏览 memory，只读渲染 Markdown。 */
 export const memorySearchModule: ModuleDefinition = {
   manifest: {
     id: 'memory.search',
     name: '记忆检索',
     version: '0.3.0',
     description:
-      '按场景与目录浏览 agents/<场景>/memory 下的记忆文件，Markdown 只读阅读，不写入。',
+      '按会话与目录浏览 agents/<会话>/memory 下的记忆文件，Markdown 只读阅读，不写入。',
     icon: 'database',
     kind: ['panel', 'tool'],
     slots: ['detail.block', 'center.view'],
@@ -69,7 +69,7 @@ export const memorySearchModule: ModuleDefinition = {
   center: {
     tabLabel: '记忆',
     title: '记忆检索',
-    subtitle: ({ sessionCount }) => `场景记忆 · 只读 Markdown · ${sessionCount} 个会话来源`,
+    subtitle: ({ sessionCount }) => `会话记忆 · 只读 Markdown · ${sessionCount} 个会话来源`,
   },
   View: ({ slot, session, settings, engine, engineLoading }) => {
     const compact = slot === 'detail.block';
@@ -79,7 +79,7 @@ export const memorySearchModule: ModuleDefinition = {
     const [openedDirs, setOpenedDirs] = useState<Record<string, true>>({});
     const boundScene = useMemo(() => resolveSessionScene(session, engine), [engine, session]);
 
-    // 绑定会话只看自己的场景；中枢调度汇总全部场景。
+    // 绑定会话只看自己的会话；中枢调度汇总全部会话。
     const scenes = useMemo(
       () => (boundScene ? [boundScene] : engine?.scenes ?? []),
       [boundScene, engine],
@@ -97,13 +97,13 @@ export const memorySearchModule: ModuleDefinition = {
       [files, keyword],
     );
 
-    // 切换会话时清空阅读位置，再落到新场景的第一份记忆。
+    // 切换会话时清空阅读位置，再落到新会话的第一份记忆。
     useEffect(() => {
       setSelected(null);
       setQuery('');
     }, [session.id, boundScene?.id]);
 
-    // 目录默认折叠，加载时不替用户选中文件；只清掉已不在当前场景里的选择。
+    // 目录默认折叠，加载时不替用户选中文件；只清掉已不在当前会话里的选择。
     // 搜索过滤只影响左侧列表，不打断右侧正在阅读的文件。
     useEffect(() => {
       if (selected && !files.some((file) => file.path === selected.path)) {
@@ -162,11 +162,11 @@ export const memorySearchModule: ModuleDefinition = {
         <header className="memory-head">
           <div>
             <div className="memory-eyebrow">MEMORY</div>
-            <h3>{boundScene ? `${boundScene.name} · 场景记忆` : '全部场景记忆'}</h3>
+            <h3>{boundScene ? `${boundScene.name} · 会话记忆` : '全部会话记忆'}</h3>
             <p>
               {boundScene
-                ? '只显示当前会话所属场景的记忆，只读。'
-                : `数据源 ${engine?.ok ? engine.scenes.length : '—'} 个场景，全部记忆只读可浏览。`}
+                ? '只显示当前会话所属会话的记忆，只读。'
+                : `数据源 ${engine?.ok ? engine.scenes.length : '—'} 个会话，全部记忆只读可浏览。`}
             </p>
           </div>
           <span className="memory-readonly">
@@ -180,7 +180,7 @@ export const memorySearchModule: ModuleDefinition = {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="按场景或文件路径筛选…"
+            placeholder="按会话或文件路径筛选…"
             spellCheck={false}
           />
           {query && (
@@ -193,7 +193,7 @@ export const memorySearchModule: ModuleDefinition = {
         <div className="memory-panes">
           <aside className="memory-tree">
             <div className="memory-tree-meta">
-              <span>{boundScene ? '当前场景' : `${grouped.length} 个场景`}</span>
+              <span>{boundScene ? '当前会话' : `${grouped.length} 个会话`}</span>
               <span>{visibleFiles.length} 份记忆</span>
             </div>
 
@@ -272,15 +272,15 @@ export const memorySearchModule: ModuleDefinition = {
                   : keyword
                     ? '没有匹配的记忆文件。'
                     : boundScene
-                      ? '当前场景还没有记忆文件。'
+                      ? '当前会话还没有记忆文件。'
                       : '还没有可浏览的记忆文件。'}
               </div>
             )}
             {grouped.length > 0 && emptySceneCount > 0 && (
               <div className="memory-tree-note">
                 {keyword
-                  ? `另有 ${emptySceneCount} 个场景没有匹配记忆`
-                  : `另有 ${emptySceneCount} 个场景暂无记忆文件`}
+                  ? `另有 ${emptySceneCount} 个会话没有匹配记忆`
+                  : `另有 ${emptySceneCount} 个会话暂无记忆文件`}
               </div>
             )}
           </aside>

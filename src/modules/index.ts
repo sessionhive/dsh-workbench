@@ -1,7 +1,12 @@
+import { agentDisplayModule } from './builtin/agent-display';
+import { dispatchTimelineModule } from './builtin/dispatch-timeline';
 import { engineChatModule } from './builtin/engine-chat';
 import { filesBrowserModule } from './builtin/files-browser';
 import { memorySearchModule } from './builtin/memory-search';
 import { neuronViewModule } from './builtin/neuron-graph';
+import { openfilmModule } from './builtin/openfilm-editor';
+import { runStatusModule } from './builtin/run-status';
+import { styleLibraryModule } from './builtin/style-library';
 import { terminalModule } from './builtin/terminal';
 import { todoListModule } from './builtin/todo-list';
 import { webSearchModule } from './builtin/web-search';
@@ -16,10 +21,15 @@ registerModules([
   webSearchModule,
   terminalModule,
   memorySearchModule,
+  dispatchTimelineModule,
+  runStatusModule,
+  openfilmModule,
+  styleLibraryModule,
+  agentDisplayModule,
 ]);
 
-export { categoryOf, MODULE_CATEGORIES } from './categories';
-export type { ModuleCategoryMeta } from './categories';
+export { categoryOf, MODULE_CATEGORIES, MODULE_ORIGINS, originOf } from './categories';
+export type { ModuleCategoryMeta, ModuleOriginMeta } from './categories';
 export { emitWorkbenchEvent, onWorkbenchEvent } from './events';
 export type { WorkbenchEvent } from './events';
 export { SlotHost } from './ModuleHost';
@@ -39,6 +49,7 @@ export type {
   ModuleInstance,
   ModuleKind,
   ModuleManifest,
+  ModuleOrigin,
   ModulePermission,
   ModuleStateChangeHandler,
   ModuleStateUpdater,

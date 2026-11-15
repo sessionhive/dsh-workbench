@@ -332,7 +332,7 @@ export const todoListModule: ModuleDefinition = {
     id: 'todo.list',
     name: '待办清单',
     version: '0.2.0',
-    description: '场景本地待办：待定 / 进行中 / 已完成 / 回收四态，删除进回收站，可恢复或彻底删除。',
+    description: '会话本地待办：待定 / 进行中 / 已完成 / 回收四态，删除进回收站，可恢复或彻底删除。',
     icon: 'check',
     kind: ['panel', 'tool'],
     slots: ['detail.block', 'center.view'],

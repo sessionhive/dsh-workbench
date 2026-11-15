@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { categoryOf, listModules, MODULE_CATEGORIES } from '../modules';
+import { categoryOf, listModules, MODULE_CATEGORIES, originOf } from '../modules';
 import type { SlotId } from '../modules';
 import type { Session } from '../types';
 import { Icon } from './icons';
@@ -113,6 +113,14 @@ export function ModuleDrawer({
                       </div>
                       <p>{definition.manifest.description}</p>
                       <div className="drawer-tags">
+                        {(() => {
+                          const origin = originOf(definition.manifest);
+                          return (
+                            <span className={`origin-badge ${origin.id}`} title={origin.hint}>
+                              {origin.short}
+                            </span>
+                          );
+                        })()}
                         {definition.manifest.slots.map((slot) => (
                           <span key={slot}>{SLOT_LABEL[slot]}</span>
                         ))}

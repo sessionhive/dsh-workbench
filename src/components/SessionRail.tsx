@@ -30,6 +30,8 @@ interface SessionRowProps {
   active: boolean;
   activity: EngineActivity;
   dataSourceCount?: number;
+  /** 会话副标题；绑定 DSH 的会话统一显示引擎分组，避免模板来源不同导致文案不一致。 */
+  sceneLabel: string;
   dragging: boolean;
   sortProps?: ReturnType<ReturnType<typeof useLongPressSort>['getItemProps']>;
   onSelect: () => void;
@@ -40,6 +42,7 @@ function SessionRow({
   active,
   activity,
   dataSourceCount,
+  sceneLabel,
   dragging,
   sortProps,
   onSelect,
@@ -61,15 +64,16 @@ function SessionRow({
       type="button"
       className={`session-item${active ? ' active' : ''}${dragging ? ' dragging' : ''}`}
       onClick={onSelect}
-      title={`${session.name} · ${session.role}${working ? ' · DSH 正在工作' : dotTitle}`}
+      title={`${session.name}${working ? ' · DSH 正在工作' : dotTitle}`}
       {...(sortProps ?? {})}
     >
       <span
         className={`session-icon${working ? ' working' : ''}`}
         style={{
           color: session.color,
-          background: `${session.color}14`,
-          borderColor: `${session.color}3d`,
+          background: `linear-gradient(150deg, ${session.color}42, ${session.color}0f)`,
+          borderColor: `${session.color}8c`,
+          boxShadow: `0 0 12px -4px ${session.color}b3, inset 0 0 10px -7px ${session.color}`,
         }}
       >
         <Icon name={session.icon} size={15} />
@@ -89,8 +93,8 @@ function SessionRow({
         </span>
         <span className="session-role">
           {isHub && typeof dataSourceCount === 'number'
-            ? `数据源 ${dataSourceCount} 个场景`
-            : `${session.scene} · ${session.role.split(' · ')[0]}`}
+            ? `数据源 ${dataSourceCount} 个会话`
+            : sceneLabel}
         </span>
       </span>
     </button>
@@ -114,6 +118,29 @@ export function SessionRail({
   const activity = useEngineActivity();
   const hub = sessions.find((session) => session.id === 'hub');
   const roles = useMemo(() => sessions.filter((session) => session.id !== 'hub'), [sessions]);
+
+  /**
+   * 引擎场景没有分组时统一显示「引擎」。
+   * 场景 id 与绑定的 harness 会话 id 都建索引，兼容从内置模板创建后手动绑定 DSH 的会话。
+   */
+  const engineGroups = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const scene of engine?.scenes ?? []) {
+      const label = (scene.group || '').trim() || '引擎';
+      map.set(scene.id, label);
+      for (const bound of scene.sessions) map.set(bound.sessionId, label);
+    }
+    return map;
+  }, [engine]);
+
+  const sceneLabelOf = (session: Session) => {
+    const boundLabel =
+      (session.engine?.sceneId ? engineGroups.get(session.engine.sceneId) : undefined) ??
+      (session.harness?.sessionId ? engineGroups.get(session.harness.sessionId) : undefined);
+    if (boundLabel) return boundLabel;
+    return session.harness?.sessionId ? '引擎' : session.scene;
+  };
+
   const sort = useLongPressSort({
     ids: roles.map((session) => session.id),
     disabled: Boolean(query.trim()),
@@ -139,6 +166,7 @@ export function SessionRail({
   const rowProps = (session: Session) => ({
     session,
     activity,
+    sceneLabel: sceneLabelOf(session),
     dragging: sort.draggingId === session.id,
     sortProps: sort.getItemProps(session.id),
     onSelect: () => {
@@ -194,7 +222,7 @@ export function SessionRail({
           <input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="筛选会话 / 场景"
+            placeholder="筛选会话"
             spellCheck={false}
           />
           {query && (
@@ -225,7 +253,7 @@ export function SessionRail({
         <div className="rail-group">
           {!collapsed && (
             <div className="rail-group-title">
-              会话角色 <span>{String(visible.length).padStart(2, '0')}</span>
+              会话 <span>{String(visible.length).padStart(2, '0')}</span>
             </div>
           )}
           {visible.map((session) => (

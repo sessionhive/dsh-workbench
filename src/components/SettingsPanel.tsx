@@ -12,8 +12,9 @@ import type {
   HealthCheck,
   HealthReport,
   HealthStatus,
+  ToolScriptEntry,
 } from '../engine/types';
-import { categoryOf, listModules } from '../modules';
+import { categoryOf, listModules, originOf } from '../modules';
 import {
   builtinThemes,
   mergeSettings,
@@ -79,6 +80,20 @@ const SLOT_LABEL: Record<string, string> = {
 function stripSkillFrontmatter(text: string) {
   const match = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(text);
   return match ? text.slice(match[0].length).trimStart() : text;
+}
+
+function formatSize(size: number) {
+  if (!size) return '0 B';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDay(ms: number) {
+  if (!ms) return '';
+  const date = new Date(ms);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 function Toggle({
@@ -150,6 +165,15 @@ export function SettingsPanel({
   const [skillReload, setSkillReload] = useState(0);
   const [skillDoc, setSkillDoc] = useState({ text: '', loading: false, error: '' });
 
+  const [toolScan, setToolScan] = useState<{
+    loading: boolean;
+    root: string;
+    missing: boolean;
+    entries: ToolScriptEntry[];
+    error: string;
+  }>({ loading: false, root: '', missing: false, entries: [], error: '' });
+  const [toolReload, setToolReload] = useState(0);
+
   const activeTheme = useMemo(() => resolveTheme(settings), [settings]);
   const moduleCatalog = useMemo(() => listModules(), []);
 
@@ -185,6 +209,8 @@ export function SettingsPanel({
     onChange({
       appearance: { ...settings.appearance, ...(next.appearance ?? {}) },
       workbench: { ...settings.workbench, ...(next.workbench ?? {}) },
+      web: settings.web,
+      browser: settings.browser,
       engine: { ...settings.engine, ...(next.engine ?? {}) },
       terminal: { ...settings.terminal, ...(next.terminal ?? {}) },
     });
@@ -319,6 +345,49 @@ export function SettingsPanel({
       alive = false;
     };
   }, [tab, skillsRoot, skillReload]);
+
+  const toolsRoot = settings.engine.toolsPath;
+
+  useEffect(() => {
+    if (tab !== 'tools') return;
+    let alive = true;
+    setToolScan((prev) => ({ ...prev, loading: true, error: '' }));
+    void (async () => {
+      try {
+        const result = await window.desktop?.scanTools(toolsRoot);
+        if (!alive) return;
+        if (!result) {
+          setToolScan({
+            loading: false,
+            root: toolsRoot,
+            missing: false,
+            entries: [],
+            error: '浏览器预览环境无法读取工具目录',
+          });
+          return;
+        }
+        setToolScan({
+          loading: false,
+          root: result.root,
+          missing: result.missing,
+          entries: result.ok ? result.entries : [],
+          error: result.ok ? '' : result.error || '读取工具目录失败',
+        });
+      } catch (error) {
+        if (!alive) return;
+        setToolScan({
+          loading: false,
+          root: toolsRoot,
+          missing: false,
+          entries: [],
+          error: `读取工具目录失败：${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [tab, toolsRoot, toolReload]);
 
   useEffect(() => {
     if (tab !== 'skills' || skillScan.entries.length === 0) return;
@@ -1055,7 +1124,7 @@ export function SettingsPanel({
                 <div className="settings-pane-head">
                   <div>
                     <h4>工作台技能</h4>
-                    <p>读取技能目录下的 SKILL.md；场景卡片引用的也是这里的技能文件。</p>
+                    <p>读取技能目录下的 SKILL.md；会话卡片引用的也是这里的技能文件。</p>
                   </div>
                   <button
                     type="button"
@@ -1107,7 +1176,7 @@ export function SettingsPanel({
                   <div className="skill-preview">
                     <div className="skill-preview-head">
                       <span className="mono">skills/{skillSelected || '—'}/SKILL.md</span>
-                      <span className="skill-owner">{skillScene?.name ?? '未归属场景'}</span>
+                      <span className="skill-owner">{skillScene?.name ?? '未归属会话'}</span>
                       <span className="doc-readonly">只读</span>
                     </div>
                     <div className="skill-preview-body">
@@ -1148,6 +1217,7 @@ export function SettingsPanel({
                 <div className="tool-grid">
                   {moduleCatalog.map((definition) => {
                     const meta = categoryOf(definition.manifest);
+                    const origin = originOf(definition.manifest);
                     return (
                       <div className="tool-card" key={definition.manifest.id}>
                         <div className="tool-card-head">
@@ -1158,6 +1228,9 @@ export function SettingsPanel({
                             <strong>{definition.manifest.name}</strong>
                             <span className="mono">v{definition.manifest.version}</span>
                           </div>
+                          <span className={`origin-badge ${origin.id}`} title={origin.hint}>
+                            {origin.short}
+                          </span>
                           <span className="tool-category">{meta.label}</span>
                         </div>
                         <p>{definition.manifest.description}</p>
@@ -1172,8 +1245,82 @@ export function SettingsPanel({
                   })}
                 </div>
 
+                <div className="tools-dir">
+                  <div className="settings-pane-head">
+                    <div>
+                      <h4>目录工具脚本</h4>
+                      <p>
+                        只读扫描「工具目录」里的脚本；摘要优先取 README 的对应段落，其次取脚本头部注释，不执行脚本。
+                      </p>
+                    </div>
+                    <div className="tools-dir-actions">
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={() => setToolReload((value) => value + 1)}
+                        disabled={toolScan.loading}
+                        title="重新扫描工具目录"
+                      >
+                        <Icon name="refresh" size={13} />
+                        刷新
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={() => void window.desktop?.openPath(toolScan.root || toolsRoot)}
+                        disabled={!window.desktop}
+                        title="在资源管理器打开工具目录"
+                      >
+                        <Icon name="folder" size={13} />
+                        打开目录
+                      </button>
+                    </div>
+                  </div>
+                  <div className="state-path mono" title={toolScan.root || toolsRoot}>
+                    {toolScan.root || toolsRoot || '未配置工具目录'}
+                  </div>
+                  {toolScan.loading && <div className="settings-note">正在扫描工具目录…</div>}
+                  {!toolScan.loading && toolScan.error && (
+                    <div className="settings-note danger-text">{toolScan.error}</div>
+                  )}
+                  {!toolScan.loading && !toolScan.error && toolScan.missing && (
+                    <div className="settings-note">工具目录还不存在，可以到「引擎」页签重新选择。</div>
+                  )}
+                  {!toolScan.loading &&
+                    !toolScan.error &&
+                    !toolScan.missing &&
+                    toolScan.entries.length === 0 && (
+                      <div className="settings-note">
+                        目录里还没有脚本。新增 .mjs / .js / .py 等文件后点刷新即可。
+                      </div>
+                    )}
+                  <div className="tool-grid">
+                    {toolScan.entries.map((entry) => (
+                      <div className="tool-card" key={entry.id}>
+                        <div className="tool-card-head">
+                          <span className="tool-card-icon">
+                            <Icon name="wrench" size={16} />
+                          </span>
+                          <div className="tool-card-title">
+                            <strong>{entry.name}</strong>
+                            <span className="mono">{formatSize(entry.size)}</span>
+                          </div>
+                          <span className="tool-category">{entry.ext}</span>
+                        </div>
+                        <p>{entry.summary || '脚本头部还没有用途说明。'}</p>
+                        <div className="tool-card-tags">
+                          <span className="mono">{entry.id}</span>
+                          {entry.modified ? <span>{formatDay(entry.modified)}</span> : null}
+                          <span>只读</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
                 <p className="settings-note">
                   工具由模块注册表统一提供，启停与排序在会话的「模块装配」里按会话独立设置。
+                  「引擎」「外部」标记的能力来自引擎或第三方项目，发布工作台时不要并入仓库。
                 </p>
               </section>
             )}
@@ -1348,7 +1495,7 @@ export function SettingsPanel({
                       {engineLoading
                         ? '正在读取引擎数据…'
                         : engine?.ok
-                          ? `${engine.scenes.length} 个场景 · ${engine.events.length} 条事件 · ${new Date(engine.scannedAt).toLocaleTimeString('zh-CN', { hour12: false })}`
+                          ? `${engine.scenes.length} 个会话 · ${engine.events.length} 条事件 · ${new Date(engine.scannedAt).toLocaleTimeString('zh-CN', { hour12: false })}`
                           : engineError || '尚未连接引擎数据目录'}
                     </p>
                   </div>
@@ -1371,7 +1518,7 @@ export function SettingsPanel({
                   <div>
                     <h4>终端默认 shell</h4>
                     <p>
-                      场景桌面里的终端盒子按这里的偏好启动。「自动」依次尝试 Git Bash、PowerShell、CMD，
+                      会话桌面里的终端盒子按这里的偏好启动。「自动」依次尝试 Git Bash、PowerShell、CMD，
                       换一台机器也会按 PATH 重新探测，不写死安装路径。
                     </p>
                   </div>
@@ -1555,7 +1702,11 @@ export function SettingsPanel({
                     onClick={() => {
                       void (async () => {
                         const defaults = await window.desktop?.defaultPaths();
-                        const next = mergeSettings(defaults ? { engine: defaults } : null);
+                        const next = mergeSettings(
+                          defaults
+                            ? { engine: defaults, web: settings.web }
+                            : { web: settings.web },
+                        );
                         onChange(next);
                         setEngineDir(next.engine.engineDir);
                         setDataPath(next.engine.dataPath);

@@ -16,6 +16,7 @@ export const engineChatModule: ModuleDefinition = {
     kind: ['view'],
     slots: ['center.view'],
     category: 'session',
+    origin: 'engine',
     permissions: ['sessions:read', 'notify'],
     persistState: false,
   },

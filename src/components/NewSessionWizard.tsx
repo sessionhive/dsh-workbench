@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { categoryOf, listModules, MODULE_CATEGORIES } from '../modules';
+import {
+  categoryOf,
+  listModules,
+  MODULE_CATEGORIES,
+  MODULE_ORIGINS,
+  originOf,
+} from '../modules';
 import type { EngineSnapshot } from '../engine/types';
-import { SESSION_ICONS, type SessionConfig, type SessionTemplate } from '../templates';
+import { SESSION_ICONS, SESSION_PALETTE, type SessionConfig, type SessionTemplate } from '../templates';
 import type { IconName } from '../types';
 import { Icon } from './icons';
 
@@ -12,6 +18,9 @@ interface NewSessionWizardProps {
   onCreate: (template: SessionTemplate, config: SessionConfig) => void;
   onSaveTemplate: (config: SessionConfig, existingId: string | null) => string;
   onDeleteTemplate: (id: string) => void;
+  /** 已有工作台会话关联的引擎场景 / Harness 会话，用于标记「已添加」。 */
+  addedSceneIds: ReadonlySet<string>;
+  addedSessionIds: ReadonlySet<string>;
   onClose: () => void;
 }
 
@@ -46,6 +55,8 @@ export function NewSessionWizard({
   onCreate,
   onSaveTemplate,
   onDeleteTemplate,
+  addedSceneIds,
+  addedSessionIds,
   onClose,
 }: NewSessionWizardProps) {
   const [query, setQuery] = useState('');
@@ -88,6 +99,12 @@ export function NewSessionWizard({
   const custom = filtered.filter((template) => template.source === 'custom');
   const engineList = filtered.filter((template) => template.source === 'engine');
 
+  const isAdded = (template: SessionTemplate) => {
+    if (template.source !== 'engine') return false;
+    if (template.engineSceneId && addedSceneIds.has(template.engineSceneId)) return true;
+    return Boolean(template.harness?.sessionId && addedSessionIds.has(template.harness.sessionId));
+  };
+
   const modules = useMemo(
     () =>
       listModules()
@@ -100,7 +117,7 @@ export function NewSessionWizard({
     [],
   );
 
-  /** 引擎里登记过的 Harness 会话，按 sessionId 去重后供场景绑定。 */
+  /** 引擎里登记过的 Harness 会话，按 sessionId 去重后供会话绑定。 */
   const harnessOptions = useMemo(() => {
     const seen = new Set<string>();
     const options: Array<{ sessionId: string; title: string; scene: string }> = [];
@@ -181,7 +198,7 @@ export function NewSessionWizard({
     setSelectedId(fallback?.id ?? '');
   };
 
-  const listItem = (template: SessionTemplate, subtitle: string) => (
+  const listItem = (template: SessionTemplate, subtitle: string, added = false) => (
     <button
       key={template.id}
       type="button"
@@ -203,6 +220,7 @@ export function NewSessionWizard({
         <small>{subtitle}</small>
       </span>
       {template.source === 'custom' && <span className="wizard-custom-tag">自定义</span>}
+      {added && <span className="wizard-used-tag">已添加</span>}
     </button>
   );
 
@@ -218,7 +236,7 @@ export function NewSessionWizard({
           <div>
             <div className="eyebrow">NEW SESSION</div>
             <h3>新建会话</h3>
-            <p>从模板装配一个新角色会话；自定义模板会写入本地存档。</p>
+            <p>从模板装配一个新会话；自定义模板会写入本地存档。</p>
           </div>
           <button type="button" className="icon-btn" aria-label="关闭新建会话" onClick={onClose}>
             <Icon name="x" size={14} />
@@ -232,7 +250,7 @@ export function NewSessionWizard({
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="筛选模板 / 场景"
+                placeholder="筛选模板 / 会话"
                 spellCheck={false}
               />
               {query && (
@@ -244,7 +262,9 @@ export function NewSessionWizard({
 
             <div className="wizard-scroll">
               {builtin.length > 0 && <div className="wizard-group">内置模板</div>}
-              {builtin.map((template) => listItem(template, template.role))}
+              {builtin.map((template) =>
+                listItem(template, `${template.scene} · ${template.modules.length} 个模块`),
+              )}
 
               {custom.length > 0 && (
                 <div className="wizard-group">
@@ -257,17 +277,17 @@ export function NewSessionWizard({
 
               {(engineList.length > 0 || engineLoading) && (
                 <div className="wizard-group">
-                  引擎场景
+                  引擎会话
                   <span>{engine?.ok ? `${engineList.length} 个` : engineLoading ? '读取中' : '未连接'}</span>
                 </div>
               )}
               {engineList.map((template) =>
-                listItem(template, `${template.scene} · ${template.description}`),
+                listItem(template, `${template.scene} · ${template.description}`, isAdded(template)),
               )}
 
               {filtered.length === 0 && (
                 <div className="wizard-empty">
-                  {engineLoading ? '正在读取引擎场景…' : '没有匹配的模板。'}
+                  {engineLoading ? '正在读取引擎会话…' : '没有匹配的模板。'}
                 </div>
               )}
             </div>
@@ -291,11 +311,10 @@ export function NewSessionWizard({
                   </span>
                   <div>
                     <strong>{form.name || selected.name}</strong>
-                    <p>{form.role || selected.role}</p>
                   </div>
                   <span className="scene-chip">
                     {selected.source === 'engine'
-                      ? '引擎场景'
+                      ? '引擎会话'
                       : selected.source === 'custom'
                         ? '自定义模板'
                         : '内置模板'}
@@ -311,24 +330,8 @@ export function NewSessionWizard({
                       spellCheck={false}
                     />
                   </label>
-                  <label>
-                    <span>角色描述</span>
-                    <input
-                      value={form.role}
-                      onChange={(event) => setForm({ ...form, role: event.target.value })}
-                      spellCheck={false}
-                    />
-                  </label>
-                  <label>
-                    <span>场景</span>
-                    <input
-                      value={form.scene}
-                      onChange={(event) => setForm({ ...form, scene: event.target.value })}
-                      spellCheck={false}
-                    />
-                  </label>
                   <p className="wizard-hint">
-                    模型不再随会话创建选择，统一由 DSH 引擎侧管理。
+                    角色与模型由 DSH 引擎侧管理，这里只调整会话名与模块装配。
                   </p>
 
                   <label className="wizard-binding">
@@ -354,7 +357,7 @@ export function NewSessionWizard({
                       {engineLoading
                         ? '正在读取引擎会话…'
                         : engine?.ok
-                          ? '打开该场景的 DSH 页签或桌面盒子时，会自动切换到绑定的 Harness 会话。'
+                          ? '打开该会话的 DSH 页签或桌面盒子时，会自动切换到绑定的 Harness 会话。'
                           : '引擎未连接，暂时无法绑定会话。'}
                     </small>
                   </label>
@@ -363,7 +366,7 @@ export function NewSessionWizard({
                     <label>
                       <span>标识色</span>
                       <div className="wizard-colors">
-                        {[ '#3bdeea', '#8f80ff', '#f6b64c', '#3ee0a3', '#e468d4', '#5aa9ff', '#ff8f6b', '#b6d66b' ].map(
+                        {SESSION_PALETTE.map(
                           (color) => (
                             <button
                               key={color}
@@ -400,6 +403,14 @@ export function NewSessionWizard({
                 <div className="wizard-modules">
                   <div className="wizard-modules-head">
                     <span>预置模块</span>
+                    <div className="origin-legend" aria-label="模块来源图例">
+                      {MODULE_ORIGINS.map((origin) => (
+                        <em key={origin.id} className={origin.id} title={origin.hint}>
+                          <i />
+                          {origin.short}
+                        </em>
+                      ))}
+                    </div>
                     <small>{form.modules.length} 个启用</small>
                   </div>
                   <div className="wizard-module-groups">
@@ -417,6 +428,7 @@ export function NewSessionWizard({
                           <div className="wizard-module-grid">
                             {group.map((definition) => {
                               const enabled = form.modules.includes(definition.manifest.id);
+                              const origin = originOf(definition.manifest);
                               return (
                                 <button
                                   key={definition.manifest.id}
@@ -428,7 +440,15 @@ export function NewSessionWizard({
                                   <span className="wizard-module-icon">
                                     <Icon name={definition.manifest.icon} size={13} />
                                   </span>
-                                  <span className="wizard-module-name">{definition.manifest.name}</span>
+                                  <span className="wizard-module-label">
+                                    <span className="wizard-module-name">{definition.manifest.name}</span>
+                                    <span
+                                      className={`origin-badge compact ${origin.id}`}
+                                      title={origin.hint}
+                                    >
+                                      {origin.short}
+                                    </span>
+                                  </span>
                                   <span className={`wizard-module-state${enabled ? ' on' : ''}`} aria-hidden="true">
                                     <Icon name="check" size={11} />
                                   </span>
@@ -444,7 +464,7 @@ export function NewSessionWizard({
 
                 <p className="wizard-note">
                   {selected.source === 'engine'
-                    ? '创建后通过只读引用关联该引擎场景；也可以「另存为模板」把它变成可编辑的自定义模板。'
+                    ? '创建后通过只读引用关联该引擎会话；也可以「另存为模板」把它变成可编辑的自定义模板。'
                     : selected.source === 'custom'
                       ? '修改后点击「更新模板」覆盖当前模板；模板只保存装配，不影响已创建的会话。'
                       : '创建后可在模块抽屉里随时调整装配；「另存为模板」会把当前表单保存为自定义模板。'}

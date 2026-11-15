@@ -22,6 +22,7 @@ interface SessionPanelProps {
   refreshEngine: () => void;
   onModuleStateChange: ModuleStateChangeHandler;
   onClose: () => void;
+  id?: string;
 }
 
 export function SessionPanel({
@@ -34,6 +35,7 @@ export function SessionPanel({
   refreshEngine,
   onModuleStateChange,
   onClose,
+  id = 'session-detail-popover',
 }: SessionPanelProps) {
   const activity = useEngineActivity();
   const scene = useMemo(() => resolveSessionScene(session, engine), [engine, session]);
@@ -57,7 +59,7 @@ export function SessionPanel({
         : '尚未绑定 DSH 会话';
 
   return (
-    <aside className="detail panel" id="session-detail-popover">
+    <aside className="detail panel" id={id}>
       <div className="detail-head">
         <div>
           <div className="eyebrow">SESSION DETAILS</div>
@@ -86,13 +88,12 @@ export function SessionPanel({
             <div className="detail-identity-title">
               <h4>{session.name}</h4>
               {isHub && (
-                <span className="data-source-chip" title="中枢调度读取全部引擎场景">
+                <span className="data-source-chip" title="中枢调度读取全部引擎会话">
                   <Icon name="database" size={10} />
-                  数据源 {engine?.ok ? engine.scenes.length : '—'} 场景
+                  数据源 {engine?.ok ? engine.scenes.length : '—'} 个会话
                 </span>
               )}
             </div>
-            <p>{session.role}</p>
             <div className="detail-identity-chips">
               <span className={`status-chip ${light}`} title={statusTitle}>
                 <i className={`status-dot ${light}`} />

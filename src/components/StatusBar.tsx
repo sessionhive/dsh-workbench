@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useEngineActivity } from '../engineActivity';
 import {
   formatBalance,
   formatClock,
@@ -35,13 +36,15 @@ export function StatusBar({
   cost,
 }: StatusBarProps) {
   const [now, setNow] = useState(() => new Date());
+  const activity = useEngineActivity();
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
 
-  const running = sessions.filter((session) => session.status === 'running').length;
+  // 运行数来自引擎页面的真实 running，而不是本地会话的旧状态字段。
+  const running = activity.working.length;
   const unread = sessions.reduce((total, session) => total + session.unread, 0);
   const time = now.toLocaleTimeString('zh-CN', { hour12: false });
 
@@ -100,7 +103,7 @@ export function StatusBar({
           {engineLoading
             ? '引擎读取中'
             : engine?.ok
-              ? `引擎 ${engine.scenes.length} 场景 · 只读`
+              ? `引擎 ${engine.scenes.length} 个会话 · 只读`
               : '引擎未连接'}
         </span>
         <span className="sep" />
