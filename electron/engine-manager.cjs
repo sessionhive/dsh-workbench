@@ -9,6 +9,9 @@ const DEFAULT_DATA_HOME = process.env.DSH_HOME || '';
 const DEFAULT_PORT = String(process.env.DSH_PORT || '3083');
 
 const READY_PATTERN = /dsh web:\s*(https?:\/\/\S+)/;
+// 工作台拉起的引擎会带上这两个标记，用于在 POSIX 上识别父进程退出后的残留进程。
+const MANAGED_ENV = 'DSH_WORKBENCH_MANAGED';
+const MANAGED_PARENT_ENV = 'DSH_WORKBENCH_PARENT';
 
 /**
  * DSH 引擎进程管理器。
@@ -114,11 +117,107 @@ function createEngineManager(options = {}) {
     }
   }
 
+  /** 读 Linux 进程命令行与父进程；读不到时返回空值，不提升权限。 */
+  function readProcCommandLine(pid) {
+    try {
+      return fs
+        .readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+        .split('\0')
+        .filter(Boolean)
+        .join(' ');
+    } catch {
+      return '';
+    }
+  }
+
+  function readProcParentPid(pid) {
+    try {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const close = stat.lastIndexOf(')');
+      if (close < 0) return 0;
+      const fields = stat.slice(close + 2).trim().split(/\s+/);
+      return Number(fields[1]) || 0;
+    } catch {
+      return 0;
+    }
+  }
+
   /**
-   * 找出占用端口的进程。命令行走 base64 回传，避免中文路径被控制台编码破坏。
-   * 只在 Windows 上启用；其他平台保持原来的端口冲突提示。
+   * 读取进程环境里的工作台标记。POSIX 下父进程退出后子进程会被 init/subreaper 收养，
+   * 单看 PPID 已无法判断是不是工作台留下的残留引擎，所以启动时打一个环境变量标记。
+   */
+  function readProcEnvironment(pid) {
+    try {
+      return fs.readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0');
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Linux 上从 /proc/net/tcp{,6} 找监听该端口的 socket inode，
+   * 再反查持有 inode 的进程。全程只读，不调用 ss/lsof，也不结束任何进程。
+   */
+  function findPortOwnerLinux() {
+    const inodes = new Set();
+    for (const table of ['/proc/net/tcp', '/proc/net/tcp6']) {
+      let text = '';
+      try {
+        text = fs.readFileSync(table, 'utf8');
+      } catch {
+        continue;
+      }
+      for (const line of text.split('\n').slice(1)) {
+        const fields = line.trim().split(/\s+/);
+        if (fields.length < 10) continue;
+        const [, local, , state, , , , , , inode] = fields;
+        if (state !== '0A' || !inode || inode === '0') continue;
+        const portHex = local.split(':').pop();
+        if (parseInt(portHex, 16) === Number(port)) inodes.add(inode);
+      }
+    }
+    if (!inodes.size) return null;
+
+    const wanted = new Set([...inodes].map((inode) => `socket:[${inode}]`));
+    let entries = [];
+    try {
+      entries = fs.readdirSync('/proc');
+    } catch {
+      return null;
+    }
+    for (const entry of entries) {
+      if (!/^\d+$/.test(entry)) continue;
+      const fdDir = `/proc/${entry}/fd`;
+      let fds = [];
+      try {
+        fds = fs.readdirSync(fdDir);
+      } catch {
+        continue;
+      }
+      for (const fd of fds) {
+        try {
+          if (!wanted.has(fs.readlinkSync(path.join(fdDir, fd)))) continue;
+          const pid = Number(entry);
+          return {
+            pid,
+            parentPid: readProcParentPid(pid),
+            commandLine: readProcCommandLine(pid),
+            environment: readProcEnvironment(pid),
+          };
+        } catch {
+          // 其他用户的进程 fd 不可读时跳过。
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 找出占用端口的进程。Windows 命令行走 base64 回传，避免中文路径被控制台编码破坏；
+   * Linux 直接读取 /proc，不依赖 ss/lsof 是否安装。
    */
   function findPortOwner() {
+    if (process.platform === 'linux') return Promise.resolve(findPortOwnerLinux());
     if (process.platform !== 'win32') return Promise.resolve(null);
     const script = [
       "$ErrorActionPreference='SilentlyContinue'",
@@ -154,35 +253,62 @@ function createEngineManager(options = {}) {
     });
   }
 
-  /** 只认这一份 CLI 在同一个端口上拉起的 `dsh web`，不碰其他服务。 */
+  /** 只认这一份 CLI 在同一个端口上拉起、且带工作台标记的 `dsh web`，不碰其他服务。 */
   function isManagedEngineProcess(owner) {
     const commandLine = String(owner.commandLine || '').toLowerCase().replace(/\\/g, '/');
     const cli = cliPath().toLowerCase().replace(/\\/g, '/');
-    return (
+    const matched =
       commandLine.includes(cli) &&
       /(^|\s)web(\s|$)/.test(commandLine) &&
-      commandLine.includes(`--port ${port}`)
-    );
+      commandLine.includes(`--port ${port}`);
+    if (!matched) return false;
+    if (process.platform === 'linux') {
+      // 环境标记能穿过父进程退出后的收养关系，避免把用户在终端里另开的 DSH 当成残留。
+      return (owner.environment || []).includes(`${MANAGED_ENV}=1`);
+    }
+    return true;
+  }
+
+  /** POSIX 下子进程以独立进程组启动，负 PID 可以一次收掉整棵进程树。 */
+  function signalProcessTree(pid, signal) {
+    try {
+      process.kill(-pid, signal);
+      return;
+    } catch {
+      /* 不是进程组组长时退回单进程 */
+    }
+    try {
+      process.kill(pid, signal);
+    } catch {
+      /* 进程可能已经退出 */
+    }
   }
 
   function terminateTree(pid) {
     return new Promise((resolve) => {
       if (!pid) return resolve();
-      if (process.platform !== 'win32') {
-        try {
-          process.kill(pid, 'SIGTERM');
-        } catch {
-          /* next */
-        }
-        return resolve();
+      if (process.platform === 'win32') {
+        const killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+          windowsHide: true,
+          stdio: 'ignore',
+        });
+        killer.on('exit', resolve);
+        killer.on('error', resolve);
+        setTimeout(resolve, 4000);
+        return;
       }
-      const killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
-        windowsHide: true,
-        stdio: 'ignore',
-      });
-      killer.on('exit', resolve);
-      killer.on('error', resolve);
-      setTimeout(resolve, 4000);
+
+      signalProcessTree(pid, 'SIGTERM');
+      const deadline = Date.now() + 2000;
+      const tick = () => {
+        if (!isProcessAlive(pid)) return resolve();
+        if (Date.now() > deadline) {
+          signalProcessTree(pid, 'SIGKILL');
+          return setTimeout(resolve, 200);
+        }
+        setTimeout(tick, 120);
+      };
+      setTimeout(tick, 120);
     });
   }
 
@@ -253,11 +379,21 @@ function createEngineManager(options = {}) {
     if (await probePort()) {
       const owner = await findPortOwner();
       const parentAlive = owner ? isProcessAlive(owner.parentPid) : false;
+      const recordedParent = owner
+        ? Number(
+            (owner.environment || [])
+              .find((item) => item.startsWith(`${MANAGED_PARENT_ENV}=`))
+              ?.slice(MANAGED_PARENT_ENV.length + 1),
+          ) || 0
+        : 0;
+      // POSIX 下父进程退出后引擎会被 init/subreaper 收养，PPID 不再指向工作台，
+      // 所以优先用启动时写进环境的父进程号判断归属。
+      const orphaned =
+        process.platform === 'linux'
+          ? recordedParent === process.pid || (recordedParent > 0 && !isProcessAlive(recordedParent))
+          : owner?.parentPid === process.pid || !parentAlive;
       // 只清理「同一份 CLI、同一端口、父进程已退出或就是本进程」的残留引擎。
-      const stale =
-        Boolean(owner) &&
-        isManagedEngineProcess(owner) &&
-        (owner.parentPid === process.pid || !parentAlive);
+      const stale = Boolean(owner) && isManagedEngineProcess(owner) && orphaned;
       if (stale) {
         recoveredLog = `检测到上次未退出的 DSH 引擎（PID ${owner.pid}）占用端口 ${port}，正在清理。`;
         appendLog(recoveredLog);
@@ -278,7 +414,12 @@ function createEngineManager(options = {}) {
 
     const nodeExe = resolveNodeExe();
     const command = nodeExe || process.execPath;
-    const env = { ...process.env, DSH_HOME: dataHome };
+    const env = {
+      ...process.env,
+      DSH_HOME: dataHome,
+      [MANAGED_ENV]: '1',
+      [MANAGED_PARENT_ENV]: String(process.pid),
+    };
     if (!nodeExe) env.ELECTRON_RUN_AS_NODE = '1';
     delete env.DSH_CUSTOMER_HOME;
     delete env.ELECTRON_NO_ASAR;
@@ -296,6 +437,8 @@ function createEngineManager(options = {}) {
         cwd: engineDir,
         env,
         windowsHide: true,
+        // POSIX 下单独成组，退出时能一次收掉引擎派生的子进程。
+        detached: process.platform !== 'win32',
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
@@ -381,20 +524,7 @@ function createEngineManager(options = {}) {
         resolve();
       };
       proc.once('exit', finish);
-      try {
-        if (process.platform === 'win32') {
-          const killer = spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], {
-            windowsHide: true,
-            stdio: 'ignore',
-          });
-          killer.on('exit', finish);
-          killer.on('error', finish);
-        } else {
-          proc.kill('SIGTERM');
-        }
-      } catch {
-        finish();
-      }
+      terminateTree(proc.pid).finally(finish);
       setTimeout(finish, 5000);
     });
   }
@@ -415,6 +545,7 @@ function createEngineManager(options = {}) {
     const proc = child;
     child = null;
     if (!proc) return;
+    // 退出时不等待：先发 SIGTERM/SIGKILL，应用随后退出。
     try {
       if (process.platform === 'win32') {
         spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], {
@@ -422,7 +553,8 @@ function createEngineManager(options = {}) {
           stdio: 'ignore',
         });
       } else {
-        proc.kill('SIGTERM');
+        signalProcessTree(proc.pid, 'SIGTERM');
+        setTimeout(() => signalProcessTree(proc.pid, 'SIGKILL'), 800).unref?.();
       }
     } catch {
       /* 退出清理失败不阻塞应用退出 */

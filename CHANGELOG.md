@@ -2,6 +2,38 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本号对应 Git 标签 `v<major>.<minor>.<patch>`。
 
+## [0.2.2] - 2026-11-15
+
+第一个 Linux 可用版本：提供 AppImage 与 deb，并把终端、端口识别、进程清理和默认路径按 Linux 重做。
+
+### 新增
+
+- **Linux 安装包**：electron-builder 配置 AppImage + deb，产物名 `dsh-workbench-0.2.2-x86_64.AppImage` / `dsh-workbench-0.2.2-amd64.deb`；`npm run dist:linux` 本地打包。
+- **Linux CI**：`.github/workflows/linux.yml` 在 Ubuntu 22.04 上构建并上传 Actions artifact；推送 `v*` 标签时自动附加到 GitHub Release。
+- **Linux 终端**：探测 Bash、Zsh、Sh，默认优先 Bash；设置页与终端盒子按同一份探测结果解析。
+- **Linux 端口归属**：通过 `/proc/net/tcp{,6}` 与 `/proc/<pid>/fd` 找出占用 3083 的进程，不依赖 `ss`/`lsof`，仍然只清理工作台自己留下的 `dsh web`。
+- **Linux 进程清理**：引擎以独立进程组启动，退出时先 `SIGTERM`，超时后 `SIGKILL`，避免留下引擎子进程。
+- **Linux 默认路径**：AppImage 用 `$APPIMAGE` 所在目录；安装态引擎优先找 `~/DSH/engine`、`~/dsh/engine`，数据优先找 `~/.dsh`；文件根默认收在家目录。
+- **Linux 文档**：新增 [docs/linux.md](docs/linux.md)，覆盖安装、引擎配置、终端、打包、Wayland/GPU 与端口排查。
+
+### 变更
+
+- 打包配置写进 `package.json` 的 `build` 字段，`release/` 加入忽略列表。
+- 托盘图标在 Linux 上按 22px 读取。
+- 版本号顺延到 0.2.2；v0.2.1 保持原有的 Windows 发布内容不变。
+
+### 修复
+
+- Linux 上父进程退出后引擎会被 init 收养，导致上次异常退出留下的 `dsh web` 无法按 PPID 识别。现在启动时会给托管引擎写入工作台标记，重开时能准确清理自己的残留进程，同时仍然不结束外部启动的 DSH。
+
+### 已知限制
+
+- Linux 目前提供 x86_64，未提供 ARM64、Flatpak 或 Snap。
+- AppImage/deb 不包含 DSH 引擎、模型凭据、dsh-collab 数据或 OpenFilm 第三方资源。
+- Wayland 与部分 GPU 驱动下透明/模糊可能降级，可切 X11 或临时用 `--disable-gpu` 排查。
+
+[0.2.2]: https://github.com/sessionhive/dsh-workbench/releases/tag/v0.2.2
+
 ## [0.2.1] - 2026-11-15
 
 ### 新增

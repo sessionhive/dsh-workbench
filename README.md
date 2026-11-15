@@ -6,6 +6,7 @@
 
 - 代码仓库：<https://github.com/sessionhive/dsh-workbench>
 - 完整文档：[docs/README.md](docs/README.md)
+- Linux 安装、路径与打包：[docs/linux.md](docs/linux.md)
 - 协作插件：[sessionhive/dsh-collab](https://github.com/sessionhive/dsh-collab)
 
 > 仓库只包含工作台外壳，不包含 DSH 引擎本体。使用前需要本机已安装 DSH，并能找到它的 CLI 与数据目录。
@@ -23,7 +24,7 @@
 
 ## 环境要求
 
-- Windows 10 / 11（当前主要目标平台；托盘、快捷方式和部分终端探测是 Windows 优先）
+- Windows 10 / 11，或 Linux x86_64（AppImage / deb；建议 Ubuntu 22.04+ 或 Debian 12+）
 - Node.js 20 或更高版本（OpenFilm 剪辑模块需要 Node.js 22.2+；其余功能 20+ 即可）
 - 已安装并可运行的 DSH 引擎
 - 首次安装依赖需要网络
@@ -49,6 +50,20 @@ npm run dev
 ```
 
 开发模式会启动 Vite（127.0.0.1:5173）并拉起 Electron，改前端代码自动热更新。
+
+Linux 可以直接用 Release 里的 AppImage / deb，也可以从源码运行：
+
+```bash
+chmod +x dsh-workbench-*.AppImage
+./dsh-workbench-*.AppImage
+
+# 或从源码
+npm ci
+npm run build
+npm start
+```
+
+Linux 的路径默认值、终端 shell、端口排查与打包方式见 [docs/linux.md](docs/linux.md)。
 
 ## 配置引擎路径
 
@@ -160,9 +175,9 @@ dist/                构建产物（不提交）
 
 - 需要外部的 DSH 引擎；没有引擎时外壳可以启动，终端/文件/网页/待办仍可用，但引擎页与会话数据为空。
 - 风格库、大屏与 OpenFilm 剪辑依赖本地自备的资源包或工具；仓库不含这些资源。
-- 目前主要面向 Windows；在 macOS / Linux 上托盘、终端 shell 探测和快捷方式脚本未做完整验证。
+- Linux 目前提供 x86_64 的 AppImage / deb；macOS 尚未验证。Wayland、托盘与部分 GPU 环境可能降级，见 [docs/linux.md](docs/linux.md)。
 - 会话与 DSH 会话的定位依赖侧栏标题匹配，DSH 页面结构变化时可能需要调整。
-- 没有内置打包安装程序；如需分发安装包，可自行接入 electron-builder 等工具。
+- Linux 安装包由 electron-builder 生成；Windows 安装包尚未提供，仍从源码运行。
 
 ## 许可证
 

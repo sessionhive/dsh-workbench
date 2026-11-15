@@ -16,8 +16,8 @@
   --red: #ff647d;
   --radius: 16px;
   --shadow: 0 22px 60px rgba(0, 0, 0, 0.45);
-  --font-sans: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --font-sans: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, "Noto Sans Mono", "DejaVu Sans Mono", monospace;
 }
 
 * {

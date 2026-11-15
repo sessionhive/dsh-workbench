@@ -205,7 +205,7 @@ npm start
 
 ## 6. 数据、备份与恢复
 
-- 工作台状态：`%APPDATA%/DSH-Workbench/workbench-state.json`。
+- 工作台状态：Windows 为 `%APPDATA%/DSH-Workbench/workbench-state.json`，Linux 为 `~/.config/DSH-Workbench/workbench-state.json`。
 - 如果该目录不可写，会退回项目内 `.data/`。
 - 状态文件包含会话、布局、主题、路径设置和模块状态，不包含引擎的模型凭据。
 - 备份时直接复制这个 JSON 文件即可；恢复时退出工作台后覆盖。

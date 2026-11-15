@@ -179,7 +179,8 @@ interface ModuleInstance {
 存档文件：
 
 ```text
-%APPDATA%/DSH-Workbench/workbench-state.json
+Windows: %APPDATA%/DSH-Workbench/workbench-state.json
+Linux:   ~/.config/DSH-Workbench/workbench-state.json
 ```
 
 写不进去时退回项目内 `.data/workbench-state.json`。可以用 `--state-dir` 或 `DSH_STATE_DIR` 覆盖，便于做隔离演示和截图。
@@ -212,13 +213,29 @@ npm run typecheck  # 只做类型检查
 npm run build      # tsc --noEmit + vite build
 npm start          # 启动已构建客户端
 npm run shot       # 启动并截图到 shot.png
+npm run dist:linux # 构建 AppImage + deb（建议在 Linux 上执行）
 ```
 
-`dist/`、`node_modules/`、`.data/`、日志和截图都在 `.gitignore` 里，不应提交。
+`dist/`、`release/`、`node_modules/`、`.data/`、日志和截图都在 `.gitignore` 里，不应提交。
 
-## 10. 已知限制
+Linux 包用 electron-builder 生成，配置在 `package.json` 的 `build` 字段；`.github/workflows/linux.yml` 在 Ubuntu 22.04 上构建并在标签发布时附到 Release。打包细节见 [linux.md](linux.md)。
 
-- 主要面向 Windows；macOS/Linux 的托盘、shell 探测和快捷方式脚本未完整验证。
+## 10. 平台适配
+
+| 能力 | Windows | Linux |
+| --- | --- | --- |
+| 终端探测 | Git Bash / PowerShell / CMD | Bash / Zsh / Sh |
+| 端口占用识别 | `Get-NetTCPConnection` + PowerShell | 读取 `/proc/net/tcp{,6}` 与 `/proc/<pid>/fd` |
+| 残留引擎清理 | 只清理同一 CLI 的 `taskkill` 进程树 | 进程组 `SIGTERM`，超时后 `SIGKILL` |
+| 安装态默认根 | 可执行文件目录 | AppImage 用 `$APPIMAGE` 所在目录，其余用可执行文件目录 |
+| 文件根默认值 | 程序根 | 家目录（避免暴露 `/`） |
+| 存档 | `%APPDATA%/DSH-Workbench` | `~/.config/DSH-Workbench` |
+| 托盘 | 16px PNG/ICO | 22px PNG（部分桌面需要 AppIndicator） |
+
+## 11. 已知限制
+
+- Linux 目前覆盖 x86_64；ARM64、Flatpak/Snap 未提供。
+- Wayland、透明窗口和 GPU 驱动差异可能让背景模糊降级，必要时切 X11 或加 `--disable-gpu` 验证。
 - 会话与 Harness 会话的定位依赖标题匹配，DSH 页面结构大改时可能需要重新绑定。
-- 没有内置安装包；分发安装器需要自行接入 electron-builder 等工具。
 - 引擎是外部依赖；没有引擎时外壳可以启动，但引擎视图与会话数据为空。
+- AppImage/deb 不包含 OpenFilm 的第三方资源与 ffmpeg，相关模块需要本地自备。

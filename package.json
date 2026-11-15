@@ -1,8 +1,9 @@
 {
   "name": "dsh-workbench",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "DSH 中枢 · 本地集成工作台",
+  "author": "sessionhive",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,12 +14,15 @@
     "url": "https://github.com/sessionhive/dsh-workbench/issues"
   },
   "main": "electron/main.cjs",
+  "desktopName": "dsh-workbench.desktop",
   "scripts": {
     "dev": "concurrently -k -s first \"vite\" \"wait-on tcp:127.0.0.1:5173 && electron electron/main.cjs --dev-url=http://127.0.0.1:5173\"",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "start": "electron electron/main.cjs",
-    "shot": "electron electron/main.cjs --capture=shot.png"
+    "shot": "electron electron/main.cjs --capture=shot.png",
+    "dist:linux": "npm run build && electron-builder --linux --publish never",
+    "pack:dir": "npm run build && electron-builder --dir"
   },
   "engines": {
     "node": ">=20"
@@ -34,8 +38,60 @@
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
     "electron": "^38.0.0",
+    "electron-builder": "^26.18.0",
     "typescript": "^5.7.3",
     "vite": "^6.1.0",
     "wait-on": "^8.0.2"
+  },
+  "build": {
+    "appId": "com.sessionhive.dshworkbench",
+    "productName": "DSH Workbench",
+    "executableName": "dsh-workbench",
+    "copyright": "Copyright © 2026 sessionhive",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "electron/openfilm-studio-process.mjs",
+      "node_modules/openfilm/**/*"
+    ],
+    "npmRebuild": false,
+    "artifactName": "dsh-workbench-${version}-${arch}.${ext}",
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "icon": "assets/icon.png",
+      "syncDesktopName": true,
+      "executableArgs": [],
+      "maintainer": "sessionhive",
+      "synopsis": "DSH 中枢 · 本地集成工作台",
+      "description": "DSH Workbench：会话桌面、DSH 引擎、文件、终端与浏览器收纳的本地集成工作台。"
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "libgbm1",
+        "libasound2"
+      ]
+    }
   }
 }

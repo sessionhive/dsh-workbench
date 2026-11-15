@@ -46,24 +46,68 @@ protocol.registerSchemesAsPrivileged([
 
 /**
  * 壳工程不写死绝对路径：开发态以工作台目录的上一级为根，安装态以可执行文件所在目录为根。
+ * AppImage 的 execPath 在临时挂载点里，改用 APPIMAGE 指向的真实文件位置。
  * 需要自定义时优先读环境变量，其次读设置里持久化的路径。
  */
 function programRoot() {
-  return app.isPackaged ? path.dirname(process.execPath) : path.resolve(__dirname, '..', '..');
+  if (!app.isPackaged) return path.resolve(__dirname, '..', '..');
+  if (process.platform === 'linux' && process.env.APPIMAGE) {
+    return path.dirname(process.env.APPIMAGE);
+  }
+  return path.dirname(process.execPath);
+}
+
+function firstExistingDir(candidates) {
+  for (const dir of candidates) {
+    try {
+      if (dir && fs.statSync(dir).isDirectory()) return dir;
+    } catch {
+      /* 继续找下一个候选位置 */
+    }
+  }
+  return '';
 }
 
 function defaultPaths() {
   const root = programRoot();
-  const engineDir = process.env.DSH_ENGINE_DIR || path.join(root, 'engine');
-  const dataPath = process.env.DSH_HOME || path.join(root, 'engine-data', '.dsh');
+  const home = os.homedir();
+  const linux = process.platform === 'linux';
+  const sourceLayout = !app.isPackaged;
+  const engineDir =
+    process.env.DSH_ENGINE_DIR ||
+    firstExistingDir([
+      path.join(root, 'engine'),
+      path.join(home, 'DSH', 'engine'),
+      path.join(home, 'dsh', 'engine'),
+      path.join(home, '.local', 'share', 'dsh', 'engine'),
+    ]) ||
+    path.join(root, 'engine');
+  const dataPath =
+    process.env.DSH_HOME ||
+    firstExistingDir([
+      path.join(root, 'engine-data', '.dsh'),
+      path.join(home, '.dsh'),
+      path.join(home, '.config', 'dsh'),
+      path.join(home, '.local', 'share', 'dsh'),
+    ]) ||
+    (linux && app.isPackaged ? path.join(home, '.dsh') : path.join(root, 'engine-data', '.dsh'));
+  const workspacePath = sourceLayout
+    ? path.join(root, 'workspace')
+    : linux
+      ? home
+      : path.join(root, 'workspace');
   return {
     root,
     engineDir,
     dataPath,
-    workspacePath: path.join(root, 'workspace'),
-    filesRoot: root,
+    workspacePath,
+    // Linux 安装态不要把整个 / 暴露给文件工作台，默认收在家目录。
+    filesRoot: linux && app.isPackaged ? home : root,
     skillsPath: path.join(dataPath, 'skills'),
-    toolsPath: path.join(root, 'tools'),
+    toolsPath:
+      linux && app.isPackaged
+        ? path.join(app.getPath('userData'), 'tools')
+        : path.join(root, 'tools'),
   };
 }
 
@@ -90,23 +134,65 @@ function resolveEnginePaths(engineSettings) {
 const terminalSessions = new Map();
 
 function findExecutables(name) {
-  try {
-    const result = spawnSync('where', [name], { encoding: 'utf8', windowsHide: true });
-    if (result.status !== 0 || !result.stdout) return [];
-    return result.stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line && fs.existsSync(line));
-  } catch {
-    return [];
+  if (process.platform === 'win32') {
+    try {
+      const result = spawnSync('where', [name], { encoding: 'utf8', windowsHide: true });
+      if (result.status !== 0 || !result.stdout) return [];
+      return result.stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line && fs.existsSync(line));
+    } catch {
+      return [];
+    }
   }
+
+  const dirs = String(process.env.PATH || '')
+    .split(path.delimiter)
+    .filter(Boolean);
+  const candidates = path.isAbsolute(name) ? [name] : dirs.map((dir) => path.join(dir, name));
+  const found = [];
+  for (const candidate of candidates) {
+    try {
+      if (!fs.statSync(candidate).isFile()) continue;
+      fs.accessSync(candidate, fs.constants.X_OK);
+      found.push(candidate);
+    } catch {
+      /* 不可执行或不存在 */
+    }
+  }
+  return [...new Set(found)];
+}
+
+function firstShell(name, loginShell) {
+  const hits = findExecutables(name);
+  if (hits.length) return hits[0];
+  if (loginShell && path.basename(loginShell) === name) return loginShell;
+  for (const dir of ['/bin', '/usr/bin', '/usr/local/bin']) {
+    const candidate = path.join(dir, name);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return '';
 }
 
 /**
  * 只按 PATH 与环境变量探测 shell，不写死安装路径；设置里保存的是 shell id，
- * 换机器后按同一份探测结果重新解析。
+ * 换机器后按同一份探测结果重新解析。Windows 识别 Git Bash / PowerShell / CMD，
+ * Linux 识别当前登录 shell 与常见的 bash / zsh / sh。
  */
 function detectTerminalShells() {
+  if (process.platform !== 'win32') {
+    const loginShell = process.env.SHELL || '';
+    const bash = firstShell('bash', loginShell);
+    const zsh = firstShell('zsh', loginShell);
+    const sh = firstShell('sh', loginShell);
+    const shells = [{ id: 'auto', label: '自动', path: '', kind: 'auto', available: true }];
+    if (bash) shells.push({ id: 'bash', label: 'Bash', path: bash, kind: 'posix', available: true });
+    if (zsh) shells.push({ id: 'zsh', label: 'Zsh', path: zsh, kind: 'posix', available: true });
+    if (sh) shells.push({ id: 'sh', label: 'Sh', path: sh, kind: 'posix', available: true });
+    return shells;
+  }
+
   const git = findExecutables('git.exe')[0];
   let bash = '';
   if (git) {
@@ -146,13 +232,13 @@ function resolveTerminalShell(preferred) {
     const picked = byId.get(preferred);
     if (picked && picked.available) return picked;
   }
-  return (
-    byId.get('git-bash')?.available
-      ? byId.get('git-bash')
-      : byId.get('powershell')?.available
-        ? byId.get('powershell')
-        : byId.get('cmd')
-  );
+  const order =
+    process.platform === 'win32' ? ['git-bash', 'powershell', 'cmd'] : ['bash', 'zsh', 'sh'];
+  for (const id of order) {
+    const shell = byId.get(id);
+    if (shell?.available) return shell;
+  }
+  return null;
 }
 
 function terminalMarker(kind) {
@@ -228,7 +314,9 @@ function terminalStart(event, payload) {
   const env = { ...process.env };
   let args = [];
   if (shell.kind === 'posix') {
-    args = ['--noprofile', '--norc'];
+    if (shell.id === 'zsh') args = ['-f'];
+    else if (shell.id === 'sh') args = [];
+    else args = ['--noprofile', '--norc'];
     env.TERM = 'xterm-256color';
   } else if (shell.kind === 'powershell') {
     args = ['-NoLogo', '-NoProfile', '-NoExit', '-Command', '-'];
@@ -1508,7 +1596,10 @@ function createTray() {
     if (image.isEmpty()) {
       image = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'icon.ico'));
     }
-    if (!image.isEmpty()) image = image.resize({ width: 16, height: 16 });
+    if (!image.isEmpty()) {
+      const traySize = process.platform === 'linux' ? 22 : 16;
+      image = image.resize({ width: traySize, height: traySize });
+    }
     tray = new Tray(image);
     tray.setToolTip('DSH 中枢 · 集成工作台');
     tray.on('click', () => showMainWindow());

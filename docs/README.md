@@ -9,6 +9,7 @@
 | 文档 | 适合谁 | 内容 |
 | --- | --- | --- |
 | [使用流程](usage.md) | 第一次打开工作台的人 | 中枢台、会话桌面、盒子、会话绑定、设置和常见操作 |
+| [Linux 使用与打包](linux.md) | 在 Linux 上安装或打包的人 | AppImage/deb、路径默认值、Bash/Zsh 终端、端口排查与 CI 打包 |
 | [DSH 引擎与插件](engine-and-plugins.md) | 准备接入引擎的人 | 引擎目录约定、托管启动方式、dsh-collab 安装与验证 |
 | [Agent 一键部署](agent-setup.md) | 让 AI Agent 代劳的人 | 从空机器到可用工作台的完整执行清单 |
 | [项目结构](architecture.md) | 想改代码或做二次开发的人 | 进程模型、模块系统、IPC、存档与安全边界 |
