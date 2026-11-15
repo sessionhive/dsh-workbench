@@ -6,6 +6,8 @@ import type {
   DispatchThresholds,
   DispatchTiming,
   EngineScene,
+  NotifyFeedResult,
+  NotifyItem,
 } from '../../engine/types';
 import type { Session } from '../../types';
 import { Icon } from '../../components/icons';
@@ -162,6 +164,25 @@ function recentDays(count: number): string[] {
 }
 
 /** 插件下发的阈值优先；旧接口缺字段时退回兜底值，避免文案跟着改死。 */
+function notifyTypeLabel(type: string): string {
+  switch (String(type || '')) {
+    case 'timeout':
+      return '超时';
+    case 'reminder':
+      return '催办';
+    case 'handoff':
+      return '转交';
+    case 'escalate':
+      return '升级';
+    case 'heartbeat-digest':
+      return '心跳摘要';
+    case 'manual':
+      return '手动';
+    default:
+      return type || '通知';
+  }
+}
+
 function thresholdsOf(feed: DispatchFeedResult | null): Required<DispatchThresholds> {
   const source = feed?.thresholds ?? {};
   const pick = (value: unknown, fallback: number) =>
@@ -480,6 +501,8 @@ export const dispatchTimelineModule: ModuleDefinition = {
   View: ({ sessions, engine, settings, actions, refreshEngine }) => {
     const [feed, setFeed] = useState<DispatchFeedResult | null>(null);
     const [loading, setLoading] = useState(true);
+    const [notifyFeed, setNotifyFeed] = useState<NotifyFeedResult | null>(null);
+    const [notifyOpen, setNotifyOpen] = useState(false);
     const [now, setNow] = useState(() => Date.now());
     const [reload, setReload] = useState(0);
     const [older, setOlder] = useState<{
@@ -528,6 +551,35 @@ export const dispatchTimelineModule: ModuleDefinition = {
             }));
             setLoading(false);
           }
+        }
+        if (alive) timer = window.setTimeout(run, document.hidden ? HIDDEN_POLL_MS : POLL_MS);
+      };
+      void run();
+      const onVisibility = () => {
+        if (!alive || document.hidden) return;
+        window.clearTimeout(timer);
+        timer = window.setTimeout(run, 300);
+      };
+      document.addEventListener('visibilitychange', onVisibility);
+      return () => {
+        alive = false;
+        window.clearTimeout(timer);
+        document.removeEventListener('visibilitychange', onVisibility);
+      };
+    }, [reload]);
+
+    // 通知接口：同样只读轮询（今天/昨天），给页头角标与通知面板用。
+    useEffect(() => {
+      const desktop = window.desktop;
+      if (!desktop?.notifyFeed) return;
+      let alive = true;
+      let timer = 0;
+      const run = async () => {
+        try {
+          const result = await desktop.notifyFeed(recentDays(RECENT_DAYS));
+          if (alive) setNotifyFeed(result);
+        } catch {
+          // 通知接口不可用时保持上一次结果，不打断派单面板
         }
         if (alive) timer = window.setTimeout(run, document.hidden ? HIDDEN_POLL_MS : POLL_MS);
       };
@@ -923,6 +975,8 @@ export const dispatchTimelineModule: ModuleDefinition = {
       );
     };
 
+    const notifyItems: NotifyItem[] = Array.isArray(notifyFeed?.items) ? notifyFeed.items.slice(0, 20) : [];
+    const notifyUnread = Number(notifyFeed?.unread) || 0;
     const live = Boolean(feed?.ok) && chains.length > 0;
     const failedDays = (feed?.days ?? []).filter((entry) => !entry.ok);
     const feedError = feed?.error || failedDays[0]?.error;
@@ -954,6 +1008,15 @@ export const dispatchTimelineModule: ModuleDefinition = {
           <div className="dispatch-actions">
             <button
               type="button"
+              className={notifyOpen ? 'icon-btn active' : 'icon-btn'}
+              title={notifyUnread > 0 ? `通知（只读）· ${notifyUnread} 条未处理` : '通知（只读）'}
+              onClick={() => setNotifyOpen((value) => !value)}
+            >
+              <Icon name="mail" size={12} />
+              {notifyUnread > 0 && <span className="dispatch-notify-badge">{notifyUnread > 99 ? '99+' : notifyUnread}</span>}
+            </button>
+            <button
+              type="button"
               className="icon-btn"
               title="刷新派单（同时重扫引擎）"
               onClick={() => {
@@ -967,6 +1030,35 @@ export const dispatchTimelineModule: ModuleDefinition = {
             </button>
           </div>
         </div>
+
+        {notifyOpen && (
+          <div className="dispatch-notify-panel">
+            <div className="dispatch-notify-head">
+              <span>通知</span>
+              <span className="dispatch-notify-hint">只读 · 由插件生成（TZ 号）· 无需 ack</span>
+            </div>
+            {notifyItems.length === 0 ? (
+              <div className="dispatch-notify-empty">
+                {notifyFeed?.error ? `通知接口不可用：${notifyFeed.error}` : '今天和昨天还没有通知。'}
+              </div>
+            ) : (
+              <ul className="dispatch-notify-list">
+                {notifyItems.map((item) => (
+                  <li key={item.id} className={item.status === 'sent' ? 'dispatch-notify-item unread' : 'dispatch-notify-item'}>
+                    <span className="dispatch-notify-id">{item.id}</span>
+                    <span className={`dispatch-notify-type t-${item.type || 'other'}`}>{notifyTypeLabel(String(item.type || ''))}</span>
+                    {item.order && <span className="dispatch-notify-order">#{item.order}</span>}
+                    <span className="dispatch-notify-content" title={item.content}>
+                      {item.content || '（无内容）'}
+                    </span>
+                    <span className="dispatch-notify-to">{item.to || '—'}</span>
+                    <span className="dispatch-notify-time">{String(item.sentAt || item.createdAt || '').slice(5, 16).replace('T', ' ')}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         {chains.length === 0 ? (
           <div className="dispatch-empty">

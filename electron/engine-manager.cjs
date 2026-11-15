@@ -1,6 +1,6 @@
-const { spawn } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const fs = require('fs');
-const http = require('http');
+const net = require('net');
 const path = require('path');
 
 // 目录由主进程按程序位置推导或从设置读取，这里不再写死任何绝对路径。
@@ -68,20 +68,25 @@ function createEngineManager(options = {}) {
 
   const cliPath = () => path.join(engineDir, 'apps', 'cli', 'lib', 'bin.js');
 
+  /**
+   * TCP 连接探测：只判断端口有没有被监听，不等 HTTP 响应。
+   * 引擎刚绑定但还没开始响应时也能识别为占用，避免重复拉起撞端口。
+   */
   function probePort() {
     return new Promise((resolve) => {
-      const req = http.get(
-        { host: '127.0.0.1', port: Number(port), path: '/', timeout: 1200 },
-        (res) => {
-          res.resume();
-          resolve(true);
-        },
-      );
-      req.on('error', () => resolve(false));
-      req.on('timeout', () => {
-        req.destroy();
-        resolve(false);
-      });
+      const socket = net.connect({ host: '127.0.0.1', port: Number(port) });
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        socket.removeAllListeners();
+        socket.destroy();
+        resolve(value);
+      };
+      socket.setTimeout(1200);
+      socket.once('connect', () => finish(true));
+      socket.once('timeout', () => finish(false));
+      socket.once('error', () => finish(false));
     });
   }
 
@@ -94,6 +99,90 @@ function createEngineManager(options = {}) {
         setTimeout(tick, 240);
       };
       void tick();
+    });
+  }
+
+  /** 信号 0 只做存在性检查，不向目标进程发送任何内容。 */
+  function isProcessAlive(pid) {
+    const id = Number(pid);
+    if (!Number.isFinite(id) || id <= 0) return false;
+    try {
+      process.kill(id, 0);
+      return true;
+    } catch (error) {
+      return Boolean(error && error.code === 'EPERM');
+    }
+  }
+
+  /**
+   * 找出占用端口的进程。命令行走 base64 回传，避免中文路径被控制台编码破坏。
+   * 只在 Windows 上启用；其他平台保持原来的端口冲突提示。
+   */
+  function findPortOwner() {
+    if (process.platform !== 'win32') return Promise.resolve(null);
+    const script = [
+      "$ErrorActionPreference='SilentlyContinue'",
+      `$c=Get-NetTCPConnection -LocalPort ${Number(port)} -State Listen | Select-Object -First 1`,
+      'if(-not $c){exit 0}',
+      '$p=Get-CimInstance Win32_Process -Filter "ProcessId=$($c.OwningProcess)"',
+      'if(-not $p){exit 0}',
+      '$pp=if($p.ParentProcessId){$p.ParentProcessId}else{0}',
+      '$b=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$p.CommandLine))',
+      'Write-Output ("{0}|{1}|{2}" -f $p.ProcessId,$pp,$b)',
+    ].join(';');
+    return new Promise((resolve) => {
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        { windowsHide: true, timeout: 6000 },
+        (error, stdout) => {
+          const line = String(stdout || '')
+            .split(/\r?\n/)
+            .map((item) => item.trim())
+            .find((item) => /^\d+\|\d+\|/.test(item));
+          if (!line) return resolve(null);
+          const [pidText, parentText, encoded] = line.split('|');
+          let commandLine = '';
+          try {
+            commandLine = Buffer.from(encoded, 'base64').toString('utf8');
+          } catch {
+            /* 读取失败按无法识别处理 */
+          }
+          resolve({ pid: Number(pidText), parentPid: Number(parentText), commandLine });
+        },
+      );
+    });
+  }
+
+  /** 只认这一份 CLI 在同一个端口上拉起的 `dsh web`，不碰其他服务。 */
+  function isManagedEngineProcess(owner) {
+    const commandLine = String(owner.commandLine || '').toLowerCase().replace(/\\/g, '/');
+    const cli = cliPath().toLowerCase().replace(/\\/g, '/');
+    return (
+      commandLine.includes(cli) &&
+      /(^|\s)web(\s|$)/.test(commandLine) &&
+      commandLine.includes(`--port ${port}`)
+    );
+  }
+
+  function terminateTree(pid) {
+    return new Promise((resolve) => {
+      if (!pid) return resolve();
+      if (process.platform !== 'win32') {
+        try {
+          process.kill(pid, 'SIGTERM');
+        } catch {
+          /* next */
+        }
+        return resolve();
+      }
+      const killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      killer.on('exit', resolve);
+      killer.on('error', resolve);
+      setTimeout(resolve, 4000);
     });
   }
 
@@ -160,13 +249,31 @@ function createEngineManager(options = {}) {
       return snapshot();
     }
 
+    let recoveredLog = '';
     if (await probePort()) {
-      setState({
-        status: 'error',
-        url: '',
-        error: `端口 ${port} 已被占用。请先关闭外部启动的 DSH 引擎，或设置环境变量 DSH_PORT 换一个端口。`,
-      });
-      return snapshot();
+      const owner = await findPortOwner();
+      const parentAlive = owner ? isProcessAlive(owner.parentPid) : false;
+      // 只清理「同一份 CLI、同一端口、父进程已退出或就是本进程」的残留引擎。
+      const stale =
+        Boolean(owner) &&
+        isManagedEngineProcess(owner) &&
+        (owner.parentPid === process.pid || !parentAlive);
+      if (stale) {
+        recoveredLog = `检测到上次未退出的 DSH 引擎（PID ${owner.pid}）占用端口 ${port}，正在清理。`;
+        appendLog(recoveredLog);
+        await terminateTree(owner.pid);
+        await waitPortFree();
+      }
+      if (await probePort()) {
+        setState({
+          status: 'error',
+          url: '',
+          error: stale
+            ? `端口 ${port} 仍被残留的 DSH 引擎占用，自动清理没有成功。请手动结束后台引擎，或换一个端口。`
+            : `端口 ${port} 已被占用。请先关闭外部启动的 DSH 引擎，或设置环境变量 DSH_PORT 换一个端口。`,
+        });
+        return snapshot();
+      }
     }
 
     const nodeExe = resolveNodeExe();
@@ -180,7 +287,7 @@ function createEngineManager(options = {}) {
       status: 'starting',
       url: '',
       error: '',
-      log: '',
+      log: recoveredLog,
       startedAt: Date.now(),
     });
 

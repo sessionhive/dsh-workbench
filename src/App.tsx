@@ -10,6 +10,7 @@ import { SessionEditor } from './components/SessionEditor';
 import { SessionRail } from './components/SessionRail';
 import { SettingsPanel } from './components/SettingsPanel';
 import { StatusBar } from './components/StatusBar';
+import { ThemeBackdrop } from './components/ThemeBackdrop';
 import { TitleBar } from './components/TitleBar';
 import { Toasts } from './components/Toasts';
 import { initialSessions, roleIcon, statusLabel } from './data';
@@ -32,6 +33,7 @@ import {
   defaultSettings,
   mergeSettings,
   resolveTheme,
+  resolveThemeLook,
   themeBackground,
   themeVariables,
   type SettingsInput,
@@ -164,6 +166,7 @@ export default function App() {
     return ids;
   }, [sessions]);
   const theme = useMemo(() => resolveTheme(settings), [settings]);
+  const themeLook = useMemo(() => resolveThemeLook(theme), [theme]);
   const themeStyle = useMemo(
     () =>
       ({
@@ -179,7 +182,13 @@ export default function App() {
     const variables = themeVariables(theme);
     Object.entries(variables).forEach(([key, value]) => root.style.setProperty(key, value));
     root.dataset.tone = theme.tone;
-  }, [theme]);
+    root.dataset.style = theme.style;
+    root.dataset.radius = themeLook.radius;
+    root.dataset.texture = themeLook.texture;
+    root.dataset.font = themeLook.font;
+    root.dataset.shadow = themeLook.shadow;
+    root.dataset.titlebar = themeLook.titlebar;
+  }, [theme, themeLook]);
 
   /** 绑定列表和引擎模板都取自场景快照：每次打开设置或向导前重扫，刚建的引擎会话才能出现。 */
   useEffect(() => {
@@ -743,8 +752,16 @@ export default function App() {
         settings.appearance.motion ? '' : ' motion-off'
       }`}
       data-tone={theme.tone}
+      data-style={theme.style}
+      data-radius={themeLook.radius}
+      data-texture={themeLook.texture}
+      data-font={themeLook.font}
+      data-shadow={themeLook.shadow}
+      data-titlebar={themeLook.titlebar}
+      data-media={theme.media?.kind ?? 'none'}
       style={themeStyle}
     >
+      <ThemeBackdrop theme={theme} motion={settings.appearance.motion} />
       <TitleBar
         mode={boardOpen ? 'board' : 'workbench'}
         onModeChange={(mode) => setBoardOpen(mode === 'board')}

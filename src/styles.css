@@ -731,6 +731,16 @@ kbd {
   animation: detail-rail-in 0.18s ease;
 }
 
+/* 打开详情时铺一层透明点击层：内嵌 webview 会吞掉页面事件，
+   有了它，点在抽屉以外的任何地方都能收起。 */
+.detail-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 179;
+  background: transparent;
+  cursor: default;
+}
+
 .detail-rail > .detail {
   flex: 1;
   min-width: 0;
@@ -6379,6 +6389,44 @@ body.terminal-splitting {
   font-size: 10px;
 }
 
+/* 新建主题的模板选择：和右侧按钮同一行，窄屏时自动换行。 */
+.theme-new-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.theme-template-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field-bg-soft);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.theme-template-pick select {
+  max-width: 132px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  outline: none;
+  cursor: pointer;
+}
+
+.theme-template-pick select option {
+  background: var(--overlay-solid);
+  color: var(--text);
+}
+
 .theme-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
@@ -6533,6 +6581,11 @@ body.terminal-splitting {
   background: rgba(var(--accent-rgb), 0.035);
 }
 
+/* 编辑时收起主题列表：编辑器本身已经很长，把字段顶到可视区。 */
+.settings-pane:has(.theme-editor) .theme-grid {
+  display: none;
+}
+
 .theme-editor-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 232px;
@@ -6663,6 +6716,25 @@ body.terminal-splitting {
   font-size: 9px;
   letter-spacing: 0.05em;
   color: rgba(255, 255, 255, 0.68);
+}
+
+.theme-preview-large[data-tone="light"] small {
+  color: rgba(18, 38, 56, 0.68);
+}
+
+/* 预览标签跟随主题的文字色：手动选黑字或白字时，预览也保持一致。 */
+.theme-preview-large[data-ink="black"] small {
+  color: rgba(16, 24, 32, 0.72);
+}
+
+.theme-preview-large[data-ink="white"] small {
+  color: rgba(244, 248, 253, 0.8);
+}
+
+.theme-preview-large[data-tone="light"] .theme-preview-window {
+  border-color: rgba(16, 40, 60, 0.16);
+  background: rgba(255, 255, 255, 0.52);
+  box-shadow: 0 14px 30px rgba(20, 44, 70, 0.16);
 }
 
 .theme-editor-foot {
@@ -10940,3 +11012,1141 @@ body.sorting-drag * {
   box-shadow: 0 34px 90px rgba(35, 60, 90, 0.26), 0 0 0 1px rgba(35, 60, 90, 0.08);
 }
 
+
+/* ---------------- 纸稿风格：配色之外的第二维度 ----------------
+   配色由 themeVariables 生成，这里只处理几何、纹理和字体：
+   直角硬边、墨色标题条、方格纸、等宽标签。只认 html 上的 data-style，
+   所以标准主题完全不受影响。 */
+
+html[data-style="paper"] {
+  --radius: 3px;
+}
+
+html[data-style="paper"] .app {
+  letter-spacing: 0.01em;
+}
+
+/* 方格纸由 themeBackground 直接画在 .app 上：只有方格纹理要关掉旧的 48px 光晕网格，
+   点阵和扫描线仍然由 .app::before 负责。 */
+html[data-style="paper"][data-texture="grid"] .app::before {
+  display: none;
+}
+
+html[data-style="paper"] .app .titlebar {
+  --text: #f4ecd9;
+  --text-2: #d9cdb2;
+  --muted: #b0a48a;
+  --line: rgba(244, 236, 217, 0.24);
+  --line-strong: rgba(244, 236, 217, 0.42);
+  border-bottom: 2px solid #1b2a36;
+  box-shadow: 0 2px 0 rgba(36, 49, 59, 0.12);
+}
+
+html[data-style="paper"] .app .titlebar .brand-name span {
+  color: #f0c06a;
+}
+
+html[data-style="paper"] .app .titlebar kbd {
+  background: rgba(0, 0, 0, 0.18);
+  border-color: rgba(244, 236, 217, 0.2);
+  border-radius: 2px;
+  color: #d9cdb2;
+}
+
+html[data-style="paper"] .app .titlebar .command-trigger {
+  background: rgba(0, 0, 0, 0.16);
+  border-color: rgba(244, 236, 217, 0.26);
+}
+
+html[data-style="paper"] .app .titlebar .mode-switch button.on {
+  background: rgba(240, 192, 106, 0.18);
+  color: #f5d79a;
+  box-shadow: inset 0 0 0 1px rgba(240, 192, 106, 0.32);
+}
+
+html[data-style="paper"] .app .brand-mark {
+  filter: none;
+}
+
+html[data-style="paper"] .app .brand-name span {
+  text-shadow: none;
+}
+
+/* 纸面块：统一硬边 + 硬投影，取消玻璃高光。 */
+html[data-style="paper"] .app :is(.panel, .modal, .palette, .drawer, .wizard-modal, .board-tile) {
+  border-radius: 2px;
+  box-shadow: 3px 4px 0 rgba(36, 49, 59, 0.14);
+}
+
+html[data-style="paper"] .app :is(.panel, .board-tile):hover {
+  border-color: rgba(var(--paper-ink-rgb), 0.42);
+}
+
+html[data-style="paper"] .app :is(.search, .command-trigger, .mode-switch, .segmented, .segmented button, .ghost-btn, .primary-btn, .icon-btn, kbd, .settings-tabs, .settings-tabs button, .density-picker, .density-picker button, .theme-card, .tool-card, .palette, .palette-item, .wizard-item, .theme-preview-large, .theme-swatch) {
+  border-radius: 2px;
+}
+
+html[data-style="paper"] .app :is(.search, .segmented, .ghost-btn, .settings-tabs) {
+  background: rgba(255, 250, 238, 0.55);
+  border-color: var(--line);
+}
+
+html[data-style="paper"] .app .settings-tabs {
+  background: rgba(246, 238, 221, 0.6);
+}
+
+html[data-style="paper"] .app .theme-editor {
+  background: rgba(226, 215, 191, 0.35);
+}
+
+html[data-style="paper"] .app .segmented button.on {
+  background: var(--paper-ink, #2f4a5f);
+  color: #f7f0dd;
+  box-shadow: none;
+}
+
+html[data-style="paper"] .app .segmented button,
+html[data-style="paper"] .app .mode-switch button,
+html[data-style="paper"] .app .settings-tabs button {
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+html[data-style="paper"] .app .primary-btn {
+  color: #f7f0dd;
+  box-shadow: 2px 2px 0 rgba(36, 49, 59, 0.24);
+}
+
+html[data-style="paper"] .app .conn {
+  border-radius: 2px;
+}
+
+/* 会话条目：选中态改成左侧墨条 + 淡墨底，不用发光。 */
+html[data-style="paper"] .app .session-item {
+  border-radius: 2px;
+}
+
+html[data-style="paper"] .app .session-item:hover {
+  background: rgba(var(--paper-ink-rgb), 0.05);
+}
+
+html[data-style="paper"] .app .session-item.active {
+  background: rgba(var(--paper-ink-rgb), 0.07);
+  border-color: rgba(var(--paper-ink-rgb), 0.28);
+  box-shadow: inset 3px 0 0 var(--paper-ink, #2f4a5f);
+}
+
+html[data-style="paper"] .app .session-icon {
+  border-radius: 2px;
+}
+
+/* 盒子标题条压成墨色板，像档案卡片的表头。 */
+html[data-style="paper"] .app .board-tile-head {
+  --text: #f2ead8;
+  --text-2: #d8ccb2;
+  --muted: #b1a58b;
+  --line: rgba(244, 236, 217, 0.22);
+  height: 34px;
+  border-bottom: 2px solid #1b2a36;
+  background: linear-gradient(180deg, #2f4154, #263645);
+}
+
+html[data-style="paper"] .app .board-tile-head .board-tile-icon {
+  border-radius: 2px;
+  border-color: rgba(240, 192, 106, 0.3);
+  background: rgba(240, 192, 106, 0.14);
+  color: #f0c06a;
+}
+
+html[data-style="paper"] .app .board-tile-head .board-tile-title small {
+  color: #b1a58b;
+}
+
+html[data-style="paper"] .app .board-tile-grip i {
+  border-radius: 0;
+}
+
+/* 浏览器收纳和二级窗口跟着变成纸片，而不是玻璃。 */
+html[data-style="paper"] .app .browser-dock-pop,
+html[data-style="paper"] .app .dock-win {
+  border-radius: 2px;
+  border-color: var(--line);
+  box-shadow: 3px 4px 0 rgba(36, 49, 59, 0.16);
+}
+
+html[data-style="paper"] .app .dock-win-head {
+  border-radius: 0;
+  border-bottom: 2px solid rgba(36, 49, 59, 0.55);
+  background: linear-gradient(180deg, #2f4154, #263645);
+}
+
+html[data-style="paper"] .app .dock-win-head b {
+  color: #f2ead8;
+}
+
+html[data-style="paper"] .app .browser-dock-btn {
+  border-radius: 2px;
+}
+
+/* 状态栏：纸底 + 上方墨线，保持信息密度。 */
+html[data-style="paper"] .app .statusbar {
+  border-top: 2px solid rgba(36, 49, 59, 0.55);
+  background: rgba(var(--surface-rgb), 0.9);
+}
+
+html[data-style="paper"] .app .statusbar .sep {
+  background: rgba(var(--paper-ink-rgb), 0.22);
+}
+
+html[data-style="paper"] .app .statusbar .online i,
+html[data-style="paper"] .app .statusbar .cost-peak i,
+html[data-style="paper"] .app .conn .dot {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 设置、主题卡片：内部分隔用虚线，接近图纸上的裁剪线。 */
+html[data-style="paper"] .app .settings-tabs {
+  border-right: 1px dashed var(--line);
+}
+
+html[data-style="paper"] .app .theme-card {
+  border-style: solid;
+}
+
+html[data-style="paper"] .app .theme-card.active {
+  box-shadow: inset 3px 0 0 var(--paper-ink, #2f4a5f);
+}
+
+/* 选中状态统一用墨块：纸面上白点和浅色底几乎看不见。 */
+html[data-style="paper"] .app .theme-active-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 0;
+  background: #f0b34a;
+  box-shadow: none;
+}
+
+html[data-style="paper"] .app .density-picker button.on {
+  background: var(--paper-ink, #2f4a5f);
+  color: #f7f0dd;
+  box-shadow: none;
+}
+
+html[data-style="paper"] .app .density-picker button:disabled {
+  opacity: 0.38;
+}
+
+html[data-style="paper"] .app .theme-swatch[data-style="paper"] {
+  border-radius: 2px;
+}
+
+/* 预览里选中的风格直接决定观感，不依赖当前已应用的风格。 */
+.app .theme-preview-large[data-style="paper"] {
+  border-radius: 2px;
+}
+
+.app .theme-preview-large[data-style="paper"] .theme-preview-window {
+  border-radius: 2px;
+  border-color: rgba(47, 74, 95, 0.4);
+  background: rgba(252, 247, 237, 0.9);
+  box-shadow: 2px 3px 0 rgba(36, 49, 59, 0.18);
+}
+
+.app .theme-preview-large[data-style="paper"] .theme-preview-bar {
+  height: 12px;
+  background: #2f4a5f !important;
+}
+
+.app .theme-preview-large[data-style="paper"] .theme-preview-body b {
+  background: rgba(47, 74, 95, 0.14);
+}
+
+html[data-style="paper"] ::-webkit-scrollbar-thumb {
+  border-radius: 0;
+  background: rgba(var(--paper-ink-rgb), 0.24);
+}
+
+/* 贴边把手和详情抽屉也该是纸面：去掉玻璃模糊与大范围柔光。 */
+html[data-style="paper"] .app .detail-rail-tab {
+  border-radius: 2px 0 0 2px;
+  border-color: var(--line);
+  background: rgba(250, 245, 233, 0.96);
+  box-shadow: -3px 4px 0 rgba(36, 49, 59, 0.14);
+  backdrop-filter: none;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+
+html[data-style="paper"] .app .detail-rail > .detail {
+  border-radius: 2px 0 0 2px;
+  box-shadow: -3px 4px 0 rgba(36, 49, 59, 0.16);
+}
+
+html[data-style="paper"] .app .detail-head {
+  border-bottom-color: var(--line);
+}
+
+/* ================= 粗野 / 终端 / 柔光 ================= */
+
+/* 粗野：2px 墨框 + 硬投影 + 零圆角，靠结构而不是光效区分层级。 */
+html[data-style="brutal"] {
+  --radius: 2px;
+}
+
+html[data-style="brutal"] .app {
+  letter-spacing: 0.005em;
+}
+
+html[data-style="brutal"] .app .titlebar {
+  border-bottom: 2px solid var(--ui-ink);
+}
+
+html[data-style="brutal"] .app .brand-mark {
+  filter: none;
+}
+
+html[data-style="brutal"] .app .brand-name span {
+  color: var(--accent);
+}
+
+html[data-style="brutal"] .app :is(.panel, .modal, .palette, .drawer, .wizard-modal, .board-tile, .theme-card, .tool-card, .dock-win, .browser-dock-pop, .settings-tabs, .theme-editor, .boot-preview) {
+  border: 2px solid var(--ui-ink);
+  border-radius: 0;
+  box-shadow: 5px 5px 0 var(--ui-shadow-ink);
+  backdrop-filter: none;
+}
+
+html[data-style="brutal"] .app :is(.search, .command-trigger, .mode-switch, .segmented, .ghost-btn, .icon-btn, .primary-btn, kbd, .settings-tabs button, .density-picker, .density-picker button, .palette-item, .wizard-item, .session-item, .theme-swatch, .theme-preview-large, .detail-rail-tab) {
+  border: 1px solid var(--ui-ink);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+html[data-style="brutal"] .app .segmented {
+  gap: 0;
+  padding: 0;
+  border-width: 2px;
+  background: transparent;
+}
+
+html[data-style="brutal"] .app .segmented button {
+  border: 0;
+  border-right: 1px solid var(--ui-ink);
+}
+
+html[data-style="brutal"] .app .segmented button:last-child {
+  border-right: 0;
+}
+
+html[data-style="brutal"] .app .segmented button.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+html[data-style="brutal"] .app .primary-btn {
+  border-color: var(--ui-ink);
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 3px 3px 0 var(--ui-ink);
+}
+
+html[data-style="brutal"] .app .session-item.active {
+  border-color: var(--ui-ink);
+  background: rgba(var(--accent-rgb), 0.16);
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+
+html[data-style="brutal"] .app .board-tile-head {
+  border-bottom: 2px solid var(--ui-ink);
+}
+
+html[data-style="brutal"] .app .statusbar {
+  border-top: 2px solid var(--ui-ink);
+  background: transparent;
+}
+
+html[data-style="brutal"] .app .statusbar .online i,
+html[data-style="brutal"] .app .statusbar .cost-peak i,
+html[data-style="brutal"] .app .conn .dot {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 终端：细描边、无投影、等宽、扫描线，选中态用下划线而不是色块。 */
+html[data-style="terminal"] {
+  --radius: 0px;
+}
+
+html[data-style="terminal"] .app {
+  letter-spacing: 0.012em;
+}
+
+html[data-style="terminal"] .app .titlebar {
+  border-bottom: 1px solid var(--bar-line);
+  box-shadow: inset 0 -1px 0 rgba(var(--accent-rgb), 0.18);
+}
+
+html[data-style="terminal"] .app .brand-name span {
+  color: var(--accent);
+  text-shadow: 0 0 10px rgba(var(--accent-rgb), 0.35);
+}
+
+html[data-style="terminal"] .app :is(.panel, .modal, .palette, .drawer, .wizard-modal, .board-tile, .theme-card, .tool-card, .dock-win, .browser-dock-pop, .settings-tabs, .theme-editor, .boot-preview) {
+  border: 1px solid rgba(var(--accent-rgb), 0.26);
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+html[data-style="terminal"] .app :is(.search, .command-trigger, .mode-switch, .segmented, .ghost-btn, .primary-btn, .icon-btn, kbd, .settings-tabs, .density-picker, .segmented button, .session-item, .palette-item, .wizard-item, .theme-swatch, .theme-preview-large, .detail-rail-tab) {
+  border-radius: 0;
+}
+
+html[data-style="terminal"] .app .segmented button.on {
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+html[data-style="terminal"] .app .primary-btn {
+  box-shadow: none;
+}
+
+html[data-style="terminal"] .app .session-item.active {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+html[data-style="terminal"] .app .board-tile-head {
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.3);
+}
+
+html[data-style="terminal"] .app .statusbar {
+  border-top: 1px solid rgba(var(--accent-rgb), 0.24);
+  background: rgba(var(--surface-rgb), 0.86);
+}
+
+html[data-style="terminal"] .app .statusbar .sep {
+  background: rgba(var(--accent-rgb), 0.3);
+}
+
+html[data-style="terminal"] .app .statusbar .online i,
+html[data-style="terminal"] .app .statusbar .cost-peak i,
+html[data-style="terminal"] .app .conn .dot {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+html[data-style="terminal"] .app .settings-tabs {
+  border-right: 1px dashed rgba(var(--accent-rgb), 0.24);
+}
+
+/* 柔光：大圆角、胶囊控件、扩散阴影，边界靠光感而不是线条。 */
+html[data-style="soft"] {
+  --radius: 22px;
+}
+
+html[data-style="soft"] .app :is(.panel, .modal, .palette, .drawer, .wizard-modal, .board-tile, .theme-card, .tool-card, .dock-win, .browser-dock-pop, .settings-tabs, .theme-editor, .boot-preview) {
+  border-color: transparent;
+  border-radius: 22px;
+  box-shadow: var(--soft-shadow);
+}
+
+html[data-style="soft"] .app :is(.search, .command-trigger, .mode-switch, .segmented, .ghost-btn, .primary-btn, .icon-btn, kbd, .settings-tabs, .density-picker, .segmented button, .session-item, .palette-item, .wizard-item) {
+  border-radius: 999px;
+}
+
+html[data-style="soft"] .app .segmented button.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 6px 16px rgba(var(--accent-rgb), 0.3);
+}
+
+html[data-style="soft"] .app .primary-btn {
+  box-shadow: 0 10px 22px rgba(var(--accent-rgb), 0.3);
+}
+
+html[data-style="soft"] .app .session-item.active {
+  border-color: transparent;
+  background: rgba(var(--accent-rgb), 0.12);
+  box-shadow: 0 8px 20px rgba(var(--accent-rgb), 0.16);
+}
+
+html[data-style="soft"] .app .statusbar {
+  border-top: 1px solid var(--line);
+  background: transparent;
+}
+
+html[data-style="soft"] .app .board-tile-head {
+  border-bottom: 1px solid var(--line);
+}
+
+/*
+ * 玻璃：面板是一块半透明玻璃，靠白边、内高光和背景模糊区分层级。
+ * 底色渐变和自定义素材都从面板后面透出来，所以不额外加不透明底色。
+ * 这一段必须在微调层之前：圆角等显式微调要能覆盖玻璃的默认几何。
+ */
+html[data-style="glass"] {
+  --radius: 18px;
+}
+
+html[data-style="glass"] .app :is(.panel, .modal, .palette, .drawer, .wizard-modal, .board-tile, .theme-card, .tool-card, .dock-win, .browser-dock-pop, .settings-tabs, .theme-editor, .boot-preview, .detail) {
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border-radius: 18px;
+  box-shadow:
+    0 26px 60px rgba(0, 0, 0, 0.36),
+    inset 0 1px 0 rgba(255, 255, 255, 0.44),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(26px) saturate(1.5);
+  -webkit-backdrop-filter: blur(26px) saturate(1.5);
+}
+
+html[data-style="glass"] .app[data-tone="light"] :is(.panel, .modal, .palette, .drawer, .wizard-modal, .board-tile, .theme-card, .tool-card, .dock-win, .browser-dock-pop, .settings-tabs, .theme-editor, .boot-preview, .detail) {
+  border-color: rgba(31, 56, 82, 0.14);
+  box-shadow:
+    0 24px 54px rgba(40, 66, 92, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -1px 0 rgba(31, 56, 82, 0.05);
+}
+
+/* 亮色玻璃上的主色多半偏浅，品牌字和发光一起收一档，避免白底泛白。 */
+html[data-style="glass"] .app[data-tone="light"] .brand-name span {
+  color: color-mix(in srgb, var(--accent) 44%, #122a3c);
+  text-shadow: none;
+}
+
+/* 玻璃面板比原底色亮，占位符跟着主题文字走，避免和面板糊成一片。 */
+html[data-style="glass"] .app input::placeholder,
+html[data-style="glass"] .app textarea::placeholder {
+  color: var(--text-2);
+  opacity: 0.7;
+}
+
+html[data-style="glass"] .app :is(.search, .command-trigger, .mode-switch, .segmented, .ghost-btn, .icon-btn, kbd, .settings-tabs button, .density-picker, .segmented button, .session-item, .palette-item, .wizard-item) {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+html[data-style="glass"] .app[data-tone="light"] :is(.search, .command-trigger, .mode-switch, .segmented, .ghost-btn, .icon-btn, kbd, .settings-tabs button, .density-picker, .segmented button, .session-item, .palette-item, .wizard-item) {
+  border-color: rgba(31, 56, 82, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+html[data-style="glass"] .app .primary-btn {
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.96), rgba(var(--accent-rgb), 0.7));
+  color: var(--accent-ink);
+  box-shadow:
+    0 10px 24px rgba(var(--accent-rgb), 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+html[data-style="glass"] .app .segmented button.on {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.08));
+  color: var(--text);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+html[data-style="glass"] .app .session-item.active {
+  border-color: rgba(255, 255, 255, 0.32);
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.28), rgba(var(--accent-rgb), 0.07));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+html[data-style="glass"] .app .titlebar {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+}
+
+html[data-style="glass"] .app .statusbar {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+}
+
+html[data-style="glass"] .app .board-tile-head {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+/* ================= 微调层（圆角 / 纹理 / 阴影 / 标题栏） ================= */
+
+/* 标准圆角：显式选「标准」时，不管当前风格都回到默认几何。 */
+html[data-radius="default"] .app {
+  --radius: 16px;
+}
+
+html[data-radius="default"] .app :is(.panel, .modal, .palette, .drawer, .wizard-modal, .board-tile, .theme-card, .tool-card, .dock-win, .browser-dock-pop, .settings-tabs, .theme-editor, .detail, .boot-preview) {
+  border-radius: 16px;
+}
+
+html[data-radius="default"] .app :is(.search, .command-trigger, .mode-switch, .segmented, .segmented button, .ghost-btn, .primary-btn, .icon-btn, kbd, .settings-tabs button, .density-picker, .density-picker button, .palette-item, .wizard-item, .session-item, .theme-swatch) {
+  border-radius: 9px;
+}
+
+html[data-radius="default"] .app .icon-btn {
+  border-radius: 8px;
+}
+
+html[data-radius="default"] .app .theme-swatch {
+  border-radius: 7px;
+}
+
+html[data-radius="default"] .app .theme-preview-large {
+  border-radius: 10px;
+}
+
+html[data-radius="default"] .app .detail-rail > .detail {
+  border-radius: 16px 0 0 16px;
+}
+
+html[data-radius="sharp"] .app :is(.panel, .modal, .palette, .drawer, .wizard-modal, .board-tile, .theme-card, .tool-card, .dock-win, .browser-dock-pop, .settings-tabs, .theme-editor, .detail, .boot-preview) {
+  border-radius: 3px;
+}
+
+html[data-radius="sharp"] .app :is(.search, .command-trigger, .mode-switch, .segmented, .segmented button, .ghost-btn, .primary-btn, .icon-btn, kbd, .settings-tabs button, .density-picker, .density-picker button, .palette-item, .wizard-item, .session-item, .theme-swatch, .theme-preview-large) {
+  border-radius: 2px;
+}
+
+html[data-radius="sharp"] .app .detail-rail > .detail {
+  border-radius: 3px 0 0 3px;
+}
+
+html[data-radius="round"] .app :is(.panel, .modal, .palette, .drawer, .wizard-modal, .board-tile, .theme-card, .tool-card, .dock-win, .browser-dock-pop, .settings-tabs, .theme-editor, .detail, .boot-preview) {
+  border-radius: 22px;
+}
+
+html[data-radius="round"] .app :is(.search, .command-trigger, .mode-switch, .segmented, .segmented button, .ghost-btn, .primary-btn, .icon-btn, kbd, .settings-tabs button, .density-picker, .density-picker button, .palette-item, .wizard-item, .session-item) {
+  border-radius: 999px;
+}
+
+html[data-radius="round"] .app .detail-rail > .detail {
+  border-radius: 22px 0 0 22px;
+}
+
+html[data-shadow="flat"] .app :is(.panel, .modal, .palette, .drawer, .wizard-modal, .board-tile, .theme-card, .tool-card, .dock-win, .browser-dock-pop, .boot-preview) {
+  box-shadow: none;
+}
+
+html[data-shadow="hard"] .app :is(.panel, .modal, .palette, .drawer, .wizard-modal, .board-tile, .theme-card, .tool-card, .dock-win, .browser-dock-pop, .boot-preview) {
+  box-shadow: 4px 4px 0 var(--ui-shadow-ink);
+}
+
+html[data-shadow="soft"] .app :is(.panel, .modal, .palette, .drawer, .wizard-modal, .board-tile, .theme-card, .tool-card, .dock-win, .browser-dock-pop, .boot-preview) {
+  box-shadow: var(--soft-shadow);
+}
+
+/* 标题栏两种覆盖：墨色板，或回到面板色。只改底色和文字变量，不碰各风格的细节。 */
+html[data-titlebar="ink"] .app .titlebar {
+  background: var(--bar-ink-grad);
+  --text: var(--bar-text);
+  --text-2: var(--bar-text-2);
+  --muted: var(--bar-muted);
+  --line: var(--bar-line);
+  --line-strong: var(--bar-line-strong);
+}
+
+html[data-titlebar="panel"] .app .titlebar {
+  background: var(--panel-grad);
+  border-bottom-color: var(--line);
+  --text: var(--tb-text);
+  --text-2: var(--tb-text-2);
+  --muted: var(--tb-muted);
+  --line: var(--tb-line);
+  --line-strong: var(--tb-line-strong);
+}
+
+/* 背景纹理：faint 保留原来的 48px 光晕网格，其余覆盖成方格 / 点阵 / 扫描线。 */
+html[data-texture="none"] .app::before {
+  display: none;
+}
+
+html[data-texture="grid"] .app::before {
+  display: block;
+  background-image:
+    linear-gradient(var(--ui-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--ui-line) 1px, transparent 1px);
+  background-size: 26px 26px;
+  mask-image: none;
+}
+
+html[data-texture="dots"] .app::before {
+  display: block;
+  background-image: radial-gradient(var(--ui-line) 1.4px, transparent 1.6px);
+  background-size: 18px 18px;
+  mask-image: radial-gradient(ellipse at 50% 0%, #000 0%, transparent 82%);
+}
+
+html[data-texture="scan"] .app::before {
+  display: block;
+  background-image: repeating-linear-gradient(0deg, var(--ui-line) 0 1px, transparent 1px 3px);
+  mask-image: none;
+}
+
+/* 星空纹理：多层大小不一的星点错位平铺，靠主题文字色和主色提亮。 */
+html[data-texture="stars"] .app::before {
+  display: block;
+  background-image:
+    radial-gradient(1.5px 1.5px at 22% 26%, color-mix(in srgb, var(--text) 82%, transparent) 46%, transparent 54%),
+    radial-gradient(1px 1px at 68% 16%, color-mix(in srgb, var(--text) 62%, transparent) 45%, transparent 55%),
+    radial-gradient(1.2px 1.2px at 84% 58%, color-mix(in srgb, var(--text) 72%, transparent) 45%, transparent 55%),
+    radial-gradient(1.7px 1.7px at 38% 76%, color-mix(in srgb, var(--accent) 85%, #ffffff) 42%, transparent 54%),
+    radial-gradient(1px 1px at 58% 88%, color-mix(in srgb, var(--text) 55%, transparent) 45%, transparent 55%),
+    radial-gradient(1.2px 1.2px at 12% 62%, color-mix(in srgb, var(--accent) 60%, var(--text)) 44%, transparent 56%);
+  background-size: 260px 260px, 190px 190px, 230px 230px, 320px 320px, 170px 170px, 290px 290px;
+  background-position: 0 0, 46px 28px, 108px 74px, 14px 132px, 76px 92px, 150px 18px;
+  mask-image: radial-gradient(ellipse at 50% 8%, #000 0%, rgba(0, 0, 0, 0.72) 58%, transparent 96%);
+  opacity: 0.92;
+}
+
+/* ================= 微调面板与即时预览 ================= */
+
+.theme-tweaks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--line);
+}
+
+.theme-tweaks-label {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.density-picker.wide {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.density-picker.wide button {
+  padding: 4px 7px;
+}
+
+.theme-preview-texture {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.theme-preview-texture[data-texture="none"],
+.theme-preview-texture[data-texture="faint"] {
+  display: none;
+}
+
+.theme-preview-texture[data-texture="grid"] {
+  background-image:
+    linear-gradient(var(--preview-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--preview-line) 1px, transparent 1px);
+  background-size: 26px 26px;
+}
+
+.theme-preview-texture[data-texture="dots"] {
+  background-image: radial-gradient(var(--preview-line) 1.4px, transparent 1.6px);
+  background-size: 18px 18px;
+}
+
+.theme-preview-texture[data-texture="scan"] {
+  background-image: repeating-linear-gradient(0deg, var(--preview-line) 0 1px, transparent 1px 3px);
+}
+
+.theme-preview-texture[data-texture="stars"] {
+  background-image:
+    radial-gradient(1.2px 1.2px at 18% 22%, rgba(255, 255, 255, 0.92) 45%, transparent 60%),
+    radial-gradient(1px 1px at 64% 40%, rgba(255, 255, 255, 0.7) 45%, transparent 60%),
+    radial-gradient(1.4px 1.4px at 42% 78%, var(--preview-line) 45%, transparent 60%),
+    radial-gradient(1px 1px at 86% 68%, rgba(255, 255, 255, 0.6) 45%, transparent 60%);
+  background-size: 42px 42px, 58px 58px, 34px 34px, 66px 66px;
+  background-position: 0 0, 18px 12px, 8px 22px, 30px 6px;
+  opacity: 0.88;
+}
+
+/* 纸稿预览的背景里已经画了方格，别再叠一层。 */
+.theme-preview-large[data-style="paper"][data-texture="grid"] .theme-preview-texture {
+  display: none;
+}
+
+.theme-preview-large[data-radius="default"] {
+  border-radius: 10px;
+}
+
+.theme-preview-large[data-radius="default"] .theme-preview-window {
+  border-radius: 7px;
+}
+
+.theme-preview-large[data-radius="default"] .theme-preview-body i {
+  border-radius: 3px;
+}
+
+.theme-preview-large[data-radius="default"] .theme-preview-body b,
+.theme-preview-large[data-radius="default"] .theme-preview-body em {
+  border-radius: 2px;
+}
+
+.theme-preview-large[data-radius="sharp"] {
+  border-radius: 3px;
+}
+
+.theme-preview-large[data-radius="sharp"] .theme-preview-window {
+  border-radius: 2px;
+}
+
+.theme-preview-large[data-radius="sharp"] .theme-preview-body i,
+.theme-preview-large[data-radius="sharp"] .theme-preview-body b,
+.theme-preview-large[data-radius="sharp"] .theme-preview-body em {
+  border-radius: 1px;
+}
+
+.theme-preview-large[data-radius="round"] {
+  border-radius: 16px;
+}
+
+.theme-preview-large[data-radius="round"] .theme-preview-window {
+  border-radius: 12px;
+}
+
+.theme-preview-large[data-radius="round"] .theme-preview-body i,
+.theme-preview-large[data-radius="round"] .theme-preview-body em {
+  border-radius: 999px;
+}
+
+.theme-preview-large[data-shadow="flat"] .theme-preview-window {
+  box-shadow: none;
+}
+
+.theme-preview-large[data-shadow="hard"] .theme-preview-window {
+  box-shadow: 4px 4px 0 var(--ui-shadow-ink);
+}
+
+.theme-preview-large[data-shadow="soft"] .theme-preview-window {
+  box-shadow: 0 16px 34px rgba(46, 74, 99, 0.28);
+}
+
+.theme-preview-large[data-font="mono"] {
+  font-family: var(--font-mono);
+}
+
+.theme-preview-large[data-font="serif"] {
+  font-family: var(--font-serif);
+}
+
+.theme-preview-large small {
+  color: var(--ui-ink);
+  opacity: 0.72;
+}
+
+.app[data-tone="light"] .theme-preview-large small {
+  color: var(--ui-ink);
+  opacity: 0.66;
+}
+
+
+/* ================= 背景素材与玻璃 ================= */
+
+/* 自定义背景层：铺在最底下，图片/视频盖住底色渐变，再压一层主题色遮罩。 */
+.theme-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.theme-backdrop img,
+.theme-backdrop video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  transform: scale(1.06);
+  filter: blur(var(--media-blur, 0px)) saturate(1.06);
+}
+
+.theme-backdrop-scrim {
+  position: absolute;
+  inset: 0;
+}
+
+.theme-preview-backdrop {
+  z-index: 0;
+  border-radius: inherit;
+}
+
+.theme-preview-large small {
+  z-index: 2;
+}
+
+/* ================= 主题素材字段 ================= */
+
+.theme-media-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.theme-media-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 210px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--field-bg-soft);
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.theme-media-chip b {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app .theme-preview-large[data-style="glass"] .theme-preview-window {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.42);
+  box-shadow:
+    0 18px 40px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ================= 关于 ================= */
+
+.about-pane .settings-pane-head {
+  align-items: flex-start;
+}
+
+.about-version {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--field-bg-soft);
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.about-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card-grad);
+}
+
+.about-mark {
+  flex-shrink: 0;
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: linear-gradient(150deg, var(--accent), rgba(var(--accent-rgb), 0.5));
+  color: var(--accent-ink);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  box-shadow: 0 14px 34px rgba(var(--accent-rgb), 0.26);
+}
+
+.about-hero strong {
+  font-size: 15px;
+}
+
+.about-hero p {
+  margin-top: 6px;
+  max-width: 62ch;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.75;
+}
+
+.about-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.about-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--field-bg-soft);
+  color: var(--text);
+  text-align: left;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+.about-link:hover {
+  border-color: var(--line-strong);
+  background: var(--field-bg);
+  transform: translateY(-1px);
+}
+
+.about-link > svg:last-child {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.about-link > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.about-link strong {
+  font-size: 12px;
+}
+
+.about-link small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.about-link-icon {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
+  border-radius: 9px;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+}
+
+.about-star {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid rgba(var(--accent-rgb), 0.32);
+  border-radius: 14px;
+  background: linear-gradient(120deg, rgba(var(--accent-rgb), 0.16), rgba(var(--accent-rgb), 0.04));
+}
+
+.about-star-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--accent);
+}
+
+.about-star > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.about-star strong {
+  font-size: 13px;
+}
+
+.about-star p {
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.about-star .primary-btn {
+  flex-shrink: 0;
+}
+
+@media (max-width: 1180px) {
+  .about-links {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 派单面板 · 通知角标/列表（只读，TZ 号） */
+.dispatch-actions .icon-btn { position: relative; }
+.dispatch-notify-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--dsw-alias-state-error-primary, #ff5d5d);
+  color: #fff;
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+  font-style: normal;
+}
+.dispatch-notify-panel {
+  border-top: 1px solid var(--dsw-alias-border-secondary, #333);
+  border-bottom: 1px solid var(--dsw-alias-border-secondary, #333);
+  background: var(--dsw-alias-bg-secondary, rgba(255, 255, 255, 0.02));
+  max-height: 220px;
+  overflow: auto;
+}
+.dispatch-notify-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.dispatch-notify-hint { opacity: 0.6; font-size: 11px; }
+.dispatch-notify-empty { padding: 8px 12px 10px; font-size: 12px; opacity: 0.7; }
+.dispatch-notify-list { list-style: none; margin: 0; padding: 0 0 4px; }
+.dispatch-notify-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.dispatch-notify-item.unread { background: rgba(255, 209, 102, 0.06); }
+.dispatch-notify-id { flex: none; font-variant-numeric: tabular-nums; opacity: 0.75; }
+.dispatch-notify-type {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+}
+.dispatch-notify-type.t-timeout { background: rgba(255, 93, 93, 0.18); }
+.dispatch-notify-type.t-escalate { background: rgba(255, 93, 93, 0.28); }
+.dispatch-notify-type.t-handoff { background: rgba(90, 160, 255, 0.18); }
+.dispatch-notify-order { flex: none; opacity: 0.8; }
+.dispatch-notify-content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dispatch-notify-to { flex: none; opacity: 0.65; font-size: 11px; }
+.dispatch-notify-time { flex: none; opacity: 0.55; font-size: 11px; font-variant-numeric: tabular-nums; }

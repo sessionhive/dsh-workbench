@@ -169,6 +169,10 @@ interface ModuleInstance {
 | `app:set-close-to-tray` | 关闭行为 |
 | `shell:open-external` / `shell:open-path` | 系统浏览器/资源管理器 |
 | `path:pick-directory` / `workspace:pick-root` / `engine:pick-root` | 目录选择 |
+| `path:pick-file` | 选背景素材：`image` / `video`，返回绝对路径与类别 |
+| `app:version` | 关于页显示的版本号 |
+
+主题素材背景通过自定义协议 `workbench-media://media?p=<路径>` 读取：渲染进程只拿到协议 URL，主进程按白名单扩展名（jpg/png/webp/gif/avif/mp4/webm/mov 等）校验并流式返回文件，受保护路径直接 404；CSP 只放行 `workbench-media:`，不放开 `file:`。
 
 ## 7. 状态与存档
 

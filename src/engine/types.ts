@@ -157,6 +157,35 @@ export interface DispatchFeedResult {
   error?: string;
 }
 
+export interface NotifyItem {
+  id: string;
+  type?: string;
+  to?: string;
+  order?: string;
+  status?: string;
+  count?: number;
+  dedupKey?: string;
+  createdAt?: string;
+  sentAt?: string;
+  content?: string;
+}
+
+export interface NotifyFeedDay {
+  day: string;
+  ok: boolean;
+  count: number;
+  error?: string;
+}
+
+export interface NotifyFeedResult {
+  ok: boolean;
+  readAt: number;
+  days: NotifyFeedDay[];
+  items: NotifyItem[];
+  unread: number;
+  error?: string;
+}
+
 export type EngineProcessStatus = 'idle' | 'starting' | 'ready' | 'error';
 
 /** 计费账本里的余额快照（只来自 cost-meter 账本，不读凭据）。 */

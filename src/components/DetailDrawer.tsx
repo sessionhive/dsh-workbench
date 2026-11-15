@@ -37,7 +37,9 @@ export function DetailDrawer({
 
   useEffect(() => {
     if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
+    // 用 click 而不是 pointerdown：透明点击层要留到整个点击结束，
+    // 否则收起得太早，底下的会话或按钮会顺带吃到一个 click。
+    const onClick = (event: MouseEvent) => {
       const target = event.target as Node;
       if (panelRef.current?.contains(target) || tabRef.current?.contains(target)) return;
       onOpenChange(false);
@@ -45,10 +47,10 @@ export function DetailDrawer({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onOpenChange(false);
     };
-    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('click', onClick, true);
     window.addEventListener('keydown', onKeyDown);
     return () => {
-      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('click', onClick, true);
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [open, onOpenChange]);
@@ -71,20 +73,28 @@ export function DetailDrawer({
       )}
 
       {open && (
-        <div className="detail-rail" ref={panelRef}>
-          <SessionPanel
-            id="session-detail-popover"
-            session={session}
-            sessions={sessions}
-            actions={actions}
-            settings={settings}
-            engine={engine}
-            engineLoading={engineLoading}
-            refreshEngine={refreshEngine}
-            onModuleStateChange={onModuleStateChange}
-            onClose={() => onOpenChange(false)}
+        <>
+          {/* 透明点击层：连内嵌 webview 上的点击也能落回主页面，点任意位置收起抽屉。 */}
+          <div
+            className="detail-scrim"
+            aria-hidden="true"
+            onClick={() => onOpenChange(false)}
           />
-        </div>
+          <div className="detail-rail" ref={panelRef}>
+            <SessionPanel
+              id="session-detail-popover"
+              session={session}
+              sessions={sessions}
+              actions={actions}
+              settings={settings}
+              engine={engine}
+              engineLoading={engineLoading}
+              refreshEngine={refreshEngine}
+              onModuleStateChange={onModuleStateChange}
+              onClose={() => onOpenChange(false)}
+            />
+          </div>
+        </>
       )}
     </>
   );

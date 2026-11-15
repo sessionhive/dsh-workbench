@@ -9,6 +9,8 @@ const {
   shell,
   clipboard,
   session,
+  protocol,
+  net,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -19,6 +21,28 @@ const os = require('os');
 const { spawn, spawnSync } = require('child_process');
 const { createEngineManager } = require('./engine-manager.cjs');
 const { createOpenfilmManager } = require('./openfilm-studio.cjs');
+
+// 背景素材协议：只读转出用户显式选择的本机图片/视频，不把整块磁盘包成 file://。
+const MEDIA_MIME = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.avif': 'image/avif',
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.ogv': 'video/ogg',
+};
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'workbench-media',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+  },
+]);
 
 /**
  * 壳工程不写死绝对路径：开发态以工作台目录的上一级为根，安装态以可执行文件所在目录为根。
@@ -862,6 +886,8 @@ function readEngineOrder(rootInput, dayInput, orderInput, agentInput) {
  */
 const DISPATCH_FEED_PATH = '/plugins/workbench-core/dispatch-feed';
 const DISPATCH_FEED_LIMIT = 4 * 1024 * 1024;
+const NOTIFY_FEED_PATH = '/plugins/workbench-core/notify-feed';
+const NOTIFY_FEED_LIMIT = 2 * 1024 * 1024;
 
 function fetchDispatchFeed(dayInput) {
   const day = String(dayInput || '').trim();
@@ -935,6 +961,57 @@ function fetchDispatchFeed(dayInput) {
     req.on('timeout', () => {
       req.destroy();
       done({ ok: false, day, readAt: Date.now(), orders: [], error: '派单接口超时' });
+    });
+  });
+}
+
+/** 只读通知接口：GET /plugins/workbench-core/notify-feed?day=YYYY-MM-DD（限本机引擎端口）。 */
+function fetchNotifyFeed(dayInput) {
+  const day = String(dayInput || '').trim();
+  if (!ORDER_DAY.test(day)) {
+    return Promise.resolve({ ok: false, day, readAt: Date.now(), items: [], unread: 0, error: '日期格式不正确' });
+  }
+  const port = Number(engineManager ? engineManager.port : 3083) || 3083;
+  const url = `http://127.0.0.1:${port}${NOTIFY_FEED_PATH}?day=${encodeURIComponent(day)}`;
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    const req = http.get(url, { timeout: 5000 }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        done({ ok: false, day, readAt: Date.now(), items: [], unread: 0, error: `通知接口返回 ${res.statusCode ?? '未知状态'}` });
+        return;
+      }
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        body += chunk;
+        if (body.length > NOTIFY_FEED_LIMIT) req.destroy();
+      });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(body);
+          done({
+            ok: true,
+            day: typeof parsed?.day === 'string' ? parsed.day : day,
+            readAt: Date.now(),
+            items: Array.isArray(parsed?.items) ? parsed.items : [],
+            unread: Number(parsed?.unread) || 0,
+          });
+        } catch {
+          done({ ok: false, day, readAt: Date.now(), items: [], unread: 0, error: '通知数据解析失败' });
+        }
+      });
+      res.on('error', (error) => done({ ok: false, day, readAt: Date.now(), items: [], unread: 0, error: String(error.message || error) }));
+    });
+    req.on('error', (error) => done({ ok: false, day, readAt: Date.now(), items: [], unread: 0, error: String(error.message || error) }));
+    req.on('timeout', () => {
+      req.destroy();
+      done({ ok: false, day, readAt: Date.now(), items: [], unread: 0, error: '通知接口超时' });
     });
   });
 }
@@ -1879,6 +1956,25 @@ ipcMain.handle('dispatch:feed', async (_event, daysInput) => {
   };
 });
 
+ipcMain.handle('notify:feed', async (_event, daysInput) => {
+  const days = (Array.isArray(daysInput) ? daysInput : [daysInput])
+    .map((day) => String(day || '').trim())
+    .filter((day, index, list) => ORDER_DAY.test(day) && list.indexOf(day) === index)
+    .slice(0, 14);
+  if (days.length === 0) {
+    return { ok: false, readAt: Date.now(), days: [], items: [], unread: 0, error: '日期格式不正确' };
+  }
+  const results = await Promise.all(days.map((day) => fetchNotifyFeed(day)));
+  return {
+    ok: results.some((result) => result.ok),
+    readAt: Date.now(),
+    days: results.map((result) => ({ day: result.day, ok: result.ok, count: result.items.length, error: result.error })),
+    items: results.flatMap((result) => result.items),
+    unread: results.reduce((sum, result) => sum + (Number(result.unread) || 0), 0),
+    error: results.find((result) => result.error)?.error,
+  };
+});
+
 ipcMain.handle('engine:scan', (_event, root) => {
   try {
     return scanEngine(root);
@@ -1940,6 +2036,25 @@ ipcMain.handle('path:pick-directory', async (_event, payload) => {
     properties: ['openDirectory'],
   });
   return result.canceled ? null : result.filePaths[0];
+});
+
+/** 背景素材只看扩展名，不读内容；选择结果交给 workbench-media 协议按需读取。 */
+ipcMain.handle('path:pick-file', async (_event, payload) => {
+  const video = payload && payload.kind === 'video';
+  const extensions = video
+    ? ['mp4', 'm4v', 'webm', 'mov', 'ogv']
+    : ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'];
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: (payload && payload.title) || (video ? '选择背景视频' : '选择背景图片'),
+    defaultPath: (payload && payload.defaultPath) || undefined,
+    properties: ['openFile'],
+    filters: [{ name: video ? '视频' : '图片', extensions }],
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  const target = path.resolve(result.filePaths[0]);
+  const mime = MEDIA_MIME[path.extname(target).toLowerCase()];
+  if (!mime) return null;
+  return { path: target, kind: mime.startsWith('video/') ? 'video' : 'image' };
 });
 
 ipcMain.handle('fs:list', (_event, payload) => {
@@ -2296,6 +2411,8 @@ ipcMain.handle('clipboard:write', (_event, text) => {
   }
 });
 
+ipcMain.handle('app:version', () => app.getVersion());
+
 ipcMain.handle('shell:open-external', async (_event, url) => {
   try {
     const parsed = new URL(String(url || ''));
@@ -2326,6 +2443,23 @@ if (!captureMode && !app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     app.setAppUserModelId('com.dsh.nexus-workbench');
+    // 背景素材：协议只转出白名单扩展名的文件，受保护路径直接 404。
+    protocol.handle('workbench-media', async (request) => {
+      try {
+        // URLSearchParams 已经解过一次码，这里不再 decode，避免路径里的 % 被二次解析。
+        const target = path.resolve(new URL(request.url).searchParams.get('p') || '');
+        const mime = MEDIA_MIME[path.extname(target).toLowerCase()];
+        if (!mime || isProtectedPath(target)) return new Response('', { status: 404 });
+        if (!fs.statSync(target).isFile()) return new Response('', { status: 404 });
+        const response = await net.fetch(pathToFileURL(target).toString());
+        const headers = new Headers(response.headers);
+        headers.set('Content-Type', mime);
+        headers.set('Cache-Control', 'no-cache');
+        return new Response(response.body, { status: response.status, headers });
+      } catch {
+        return new Response('', { status: 400 });
+      }
+    });
     // 存档目录优先独立到 DSH-Workbench，失败时退回项目 .data，保证状态一定能落盘。
     const picked = pickStateDir();
     stateDir = picked.dir;

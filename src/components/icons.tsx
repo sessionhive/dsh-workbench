@@ -330,6 +330,9 @@ const paths: Record<IconName, ReactNode> = {
       <path d="m7.4 4.5 2.2 4.5M12.2 4.5l2.2 4.5M17 4.5l2.2 4.5" />
     </>
   ),
+  star: (
+    <path d="m12 3.8 2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8Z" />
+  ),
 };
 
 interface IconProps {

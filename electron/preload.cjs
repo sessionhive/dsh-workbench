@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('desktop', {
   scanEngine: (root) => ipcRenderer.invoke('engine:scan', root),
   engineEvents: (root) => ipcRenderer.invoke('engine:events', root),
   dispatchFeed: (days) => ipcRenderer.invoke('dispatch:feed', days),
+  notifyFeed: (days) => ipcRenderer.invoke('notify:feed', days),
   costSnapshot: (root) => ipcRenderer.invoke('cost:snapshot', root),
   engineStatus: () => ipcRenderer.invoke('engine:status'),
   engineStart: () => ipcRenderer.invoke('engine:start'),
@@ -62,10 +63,13 @@ contextBridge.exposeInMainWorld('desktop', {
   agentDisplayImport: () => ipcRenderer.invoke('agent-display:import'),
   agentDisplayOpenExternal: () => ipcRenderer.invoke('agent-display:open-external'),
   defaultPaths: () => ipcRenderer.invoke('paths:defaults'),
+  version: () => ipcRenderer.invoke('app:version'),
   pickEngineRoot: (defaultPath) => ipcRenderer.invoke('engine:pick-root', defaultPath),
   pickWorkspaceRoot: (defaultPath) => ipcRenderer.invoke('workspace:pick-root', defaultPath),
   pickDirectory: (title, defaultPath) =>
     ipcRenderer.invoke('path:pick-directory', { title, defaultPath }),
+  pickFile: (kind, title, defaultPath) =>
+    ipcRenderer.invoke('path:pick-file', { kind, title, defaultPath }),
   listDirectory: (root, relative) => ipcRenderer.invoke('fs:list', { root, relative }),
   resolvePath: (root, target) => ipcRenderer.invoke('fs:resolve', { root, target }),
   previewFile: (root, relative) => ipcRenderer.invoke('fs:preview', { root, relative }),

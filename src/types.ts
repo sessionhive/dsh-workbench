@@ -75,7 +75,8 @@ export type IconName =
   | 'reset'
   | 'folderPlus'
   | 'filePlus'
-  | 'film';
+  | 'film'
+  | 'star';
 
 export interface SessionEvent {
   id: string;

@@ -1,6 +1,7 @@
 import type {
   CostSnapshot,
   DispatchFeedResult,
+  NotifyFeedResult,
   EngineDocResult,
   EngineEventFeed,
   EngineProcessInfo,
@@ -44,6 +45,7 @@ declare global {
       scanEngine: (root: string) => Promise<EngineSnapshot>;
       engineEvents: (root: string) => Promise<EngineEventFeed>;
       dispatchFeed: (days: string[]) => Promise<DispatchFeedResult>;
+      notifyFeed: (days: string[]) => Promise<NotifyFeedResult>;
       costSnapshot: (root: string) => Promise<CostSnapshot>;
       engineStatus: () => Promise<EngineProcessInfo>;
       engineStart: () => Promise<EngineProcessInfo>;
@@ -70,9 +72,15 @@ declare global {
       agentDisplayImport: () => Promise<AgentDisplayStatus>;
       agentDisplayOpenExternal: () => Promise<{ ok: boolean; error?: string }>;
       defaultPaths: () => Promise<PathDefaults>;
+      version: () => Promise<string>;
       pickEngineRoot: (defaultPath?: string) => Promise<string | null>;
       pickWorkspaceRoot: (defaultPath?: string) => Promise<string | null>;
       pickDirectory: (title: string, defaultPath: string) => Promise<string | null>;
+      pickFile: (
+        kind: 'image' | 'video',
+        title?: string,
+        defaultPath?: string,
+      ) => Promise<{ path: string; kind: 'image' | 'video' } | null>;
       listDirectory: (root: string, relative: string) => Promise<FileListing>;
       resolvePath: (
         root: string,

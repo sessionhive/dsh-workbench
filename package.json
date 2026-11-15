@@ -1,7 +1,7 @@
 {
   "name": "dsh-workbench",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DSH 中枢 · 本地集成工作台",
   "license": "MIT",
   "repository": {

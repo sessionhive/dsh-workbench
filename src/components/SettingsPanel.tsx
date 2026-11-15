@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
   bootLines,
   DEFAULT_BOOT_LINES,
@@ -17,11 +17,21 @@ import type {
 import { categoryOf, listModules, originOf } from '../modules';
 import {
   builtinThemes,
+  defaultThemeTweaks,
   mergeSettings,
+  mixHex,
   resolveTheme,
+  resolveThemeLook,
   rgba,
+  themeBackground,
+  themeTextInk,
   type Density,
+  type ThemeBackgroundMode,
   type ThemeDefinition,
+  type ThemeMedia,
+  type ThemeStyle,
+  type ThemeTextTone,
+  type ThemeTweaks,
   type ThemeTone,
   type WorkbenchSettings,
 } from '../settings';
@@ -29,6 +39,7 @@ import type { IconName } from '../types';
 import type { TerminalShellOption } from '../terminal/types';
 import { Icon } from './icons';
 import { Markdown } from './Markdown';
+import { ThemeBackdrop } from './ThemeBackdrop';
 
 interface SettingsPanelProps {
   settings: WorkbenchSettings;
@@ -49,7 +60,8 @@ type TabId =
   | 'health'
   | 'skills'
   | 'tools'
-  | 'storage';
+  | 'storage'
+  | 'about';
 
 const TABS: Array<{ id: TabId; label: string; eyebrow: string; icon: IconName }> = [
   { id: 'themes', label: '主题', eyebrow: 'THEME', icon: 'palette' },
@@ -60,6 +72,7 @@ const TABS: Array<{ id: TabId; label: string; eyebrow: string; icon: IconName }>
   { id: 'skills', label: '技能', eyebrow: 'SKILLS', icon: 'book' },
   { id: 'tools', label: '工具', eyebrow: 'TOOLS', icon: 'wrench' },
   { id: 'storage', label: '存档', eyebrow: 'STORAGE', icon: 'save' },
+  { id: 'about', label: '关于', eyebrow: 'ABOUT', icon: 'spark' },
 ];
 
 const HEALTH_LABEL: Record<HealthStatus, string> = {
@@ -125,8 +138,86 @@ interface ThemeDraft {
   tone: ThemeTone;
   accent: string;
   background: string;
+  backgroundMode: ThemeBackgroundMode;
+  background2: string;
+  background3: string;
+  media: ThemeMedia | null;
   glow: number;
+  style: ThemeStyle;
+  tweaks: ThemeTweaks;
+  textTone: ThemeTextTone;
 }
+
+const styleNames: Record<ThemeStyle, string> = {
+  standard: '标准',
+  paper: '纸稿',
+  brutal: '粗野',
+  terminal: '终端',
+  soft: '柔光',
+  glass: '玻璃',
+};
+const styleOptions: Array<[ThemeStyle, string]> = [
+  ['standard', '标准'],
+  ['paper', '纸稿'],
+  ['brutal', '粗野'],
+  ['terminal', '终端'],
+  ['soft', '柔光'],
+  ['glass', '玻璃'],
+];
+
+const backgroundModes: Array<[ThemeBackgroundMode, string]> = [
+  ['solid', '纯色'],
+  ['duo', '双色'],
+  ['trio', '三色'],
+];
+
+/** 从主题（或当前草稿）抄一份，渐变与素材缺省时给出可编辑的默认值。 */
+function draftFromTheme(theme: ThemeDefinition, id: string, name: string): ThemeDraft {
+  return {
+    id,
+    name,
+    tone: theme.tone,
+    accent: theme.accent,
+    background: theme.background,
+    backgroundMode: theme.backgroundMode ?? 'solid',
+    background2: theme.background2 ?? mixHex(theme.background, theme.accent, 0.58),
+    background3: theme.background3 ?? mixHex(theme.background, '#4f7dff', 0.42),
+    media: theme.media ? { ...theme.media } : null,
+    glow: theme.glow,
+    style: theme.style,
+    tweaks: { ...(theme.tweaks ?? defaultThemeTweaks) },
+    textTone: theme.textTone ?? 'auto',
+  };
+}
+
+function fileName(target: string) {
+  return target.split(/[\\/]/).filter(Boolean).pop() ?? target;
+}
+
+const paperBackground = '#eee5d0';
+
+/** 纸稿的皮肤是固定浅色纸面，深色底色会让整页读起来发脏，切换时顺手校正。 */
+function isDarkColor(hex: string): boolean {
+  const match = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!match) return false;
+  const [r, g, b] = match.slice(1).map((part) => parseInt(part, 16));
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5;
+}
+
+type TweakKey = keyof ThemeTweaks;
+
+const tweakOptions: Array<{
+  key: TweakKey;
+  label: string;
+  hint: string;
+  options: Array<[string, string]>;
+}> = [
+  { key: 'radius', label: '圆角', hint: '面板与控件的圆角，标准为 16px', options: [['auto', '跟随'], ['default', '标准'], ['sharp', '直角'], ['round', '圆润']] },
+  { key: 'texture', label: '纹理', hint: '背景网格、扫描线或星空', options: [['auto', '跟随'], ['none', '无'], ['grid', '方格'], ['dots', '点阵'], ['scan', '扫描'], ['stars', '星空']] },
+  { key: 'font', label: '字体', hint: '界面正文字体', options: [['auto', '跟随'], ['sans', '无衬线'], ['mono', '等宽'], ['serif', '衬线']] },
+  { key: 'shadow', label: '阴影', hint: '面板投影方式', options: [['auto', '跟随'], ['flat', '扁平'], ['hard', '硬边'], ['soft', '柔光']] },
+  { key: 'titlebar', label: '标题栏', hint: '顶栏底色与文字', options: [['auto', '跟随'], ['ink', '墨色'], ['panel', '面板']] },
+];
 
 function parsePreviewLine(raw: string) {
   const value = raw.trim();
@@ -155,6 +246,7 @@ export function SettingsPanel({
   const [skillsPath, setSkillsPath] = useState(settings.engine.skillsPath);
   const [toolsPath, setToolsPath] = useState(settings.engine.toolsPath);
   const [draft, setDraft] = useState<ThemeDraft | null>(null);
+  const [templateId, setTemplateId] = useState(settings.appearance.themeId);
 
   const [skillScan, setSkillScan] = useState<{
     loading: boolean;
@@ -173,8 +265,27 @@ export function SettingsPanel({
     error: string;
   }>({ loading: false, root: '', missing: false, entries: [], error: '' });
   const [toolReload, setToolReload] = useState(0);
+  const [appVersion, setAppVersion] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    void window.desktop?.version?.().then((value) => {
+      if (alive && typeof value === 'string') setAppVersion(value);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const activeTheme = useMemo(() => resolveTheme(settings), [settings]);
+  const templateTheme = useMemo(
+    () => settings.appearance.themes.find((theme) => theme.id === templateId) ?? activeTheme,
+    [settings.appearance.themes, templateId, activeTheme],
+  );
+  const draftLook = useMemo(
+    () => (draft ? resolveThemeLook({ ...draft, builtin: false }) : null),
+    [draft],
+  );
   const moduleCatalog = useMemo(() => listModules(), []);
 
   useEffect(() => {
@@ -587,26 +698,12 @@ export function SettingsPanel({
     return { total, failed, warned, passed: total - failed - warned, status };
   }, [healthChecks]);
 
-  const startNewTheme = () => {
-    setDraft({
-      id: `custom-${Date.now().toString(36)}`,
-      name: '我的主题',
-      tone: activeTheme.tone,
-      accent: activeTheme.accent,
-      background: activeTheme.background,
-      glow: activeTheme.glow,
-    });
+  const startNewTheme = (base: ThemeDefinition = activeTheme) => {
+    setDraft(draftFromTheme(base, `custom-${Date.now().toString(36)}`, '我的主题'));
   };
 
   const startEditTheme = (theme: ThemeDefinition) => {
-    setDraft({
-      id: theme.id,
-      name: theme.name,
-      tone: theme.tone,
-      accent: theme.accent,
-      background: theme.background,
-      glow: theme.glow,
-    });
+    setDraft(draftFromTheme(theme, theme.id, theme.name));
   };
 
   const saveTheme = () => {
@@ -614,10 +711,17 @@ export function SettingsPanel({
     const theme: ThemeDefinition = {
       id: draft.id,
       name: draft.name.trim(),
-      tone: draft.tone,
+      tone: draft.style === 'paper' ? 'light' : draft.tone,
       accent: draft.accent,
       background: draft.background,
-      glow: draft.glow,
+      backgroundMode: draft.backgroundMode,
+      background2: draft.background2,
+      background3: draft.background3,
+      media: draft.media ? { ...draft.media } : null,
+      glow: draft.style === 'paper' ? Math.min(draft.glow, 30) : draft.glow,
+      style: draft.style,
+      tweaks: { ...draft.tweaks },
+      textTone: draft.textTone,
       builtin: false,
     };
     const themes = [
@@ -626,6 +730,37 @@ export function SettingsPanel({
     ];
     patch({ appearance: { ...settings.appearance, themes, themeId: theme.id } });
     setDraft(null);
+  };
+
+  /** 完成按钮：正在编辑的主题草稿直接落盘，不需要先点「保存并应用」。 */
+  const finishSettings = () => {
+    if (draft && draft.name.trim()) saveTheme();
+    onClose();
+  };
+
+  const pickThemeMedia = async (kind: ThemeMedia['kind']) => {
+    const picked = await window.desktop?.pickFile?.(
+      kind,
+      kind === 'video' ? '选择背景视频' : '选择背景图片',
+    );
+    if (!picked) return;
+    setDraft((current) =>
+      current
+        ? {
+            ...current,
+            media: {
+              kind: picked.kind,
+              path: picked.path,
+              dim: current.media?.dim ?? 52,
+              blur: current.media?.blur ?? 0,
+            },
+          }
+        : current,
+    );
+  };
+
+  const openLink = (url: string) => {
+    void window.desktop?.openExternal?.(url);
   };
 
   const deleteTheme = (theme: ThemeDefinition) => {
@@ -644,7 +779,7 @@ export function SettingsPanel({
     <div
       className="modal-overlay"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) finishSettings();
       }}
     >
       <div className="modal settings-modal" role="dialog" aria-modal="true" aria-label="设置">
@@ -653,7 +788,7 @@ export function SettingsPanel({
             <h3>设置</h3>
             <span>SETTINGS</span>
           </div>
-          <button type="button" className="icon-btn" aria-label="关闭设置" onClick={onClose}>
+          <button type="button" className="icon-btn" aria-label="关闭设置" onClick={finishSettings}>
             <Icon name="x" size={14} />
           </button>
         </div>
@@ -684,12 +819,33 @@ export function SettingsPanel({
                 <div className="settings-pane-head">
                   <div>
                     <h4>主题与外观</h4>
-                    <p>内置黑、青、蓝、白、绿、粉、紫七套配色；自定义主题会随存档保存。</p>
+                    <p>
+                      十套内置主题、六种风格；「纸稿」「粗野」「终端」「柔光」「玻璃」各自带一套几何与质感。自定义主题还能调双色 / 三色渐变、贴纸或视频背景，并逐项微调。新建时可以先选一个主题当模板，从它的配色与风格开始改。
+                    </p>
                   </div>
-                  <button type="button" className="ghost-btn" onClick={startNewTheme}>
-                    <Icon name="plus" size={13} />
-                    新建主题
-                  </button>
+                  <div className="theme-new-bar">
+                    <label className="theme-template-pick" title="新建主题时以哪个主题为模板">
+                      <span>模板</span>
+                      <select
+                        value={templateTheme.id}
+                        onChange={(event) => setTemplateId(event.target.value)}
+                      >
+                        {settings.appearance.themes.map((theme) => (
+                          <option key={theme.id} value={theme.id}>
+                            {theme.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={() => startNewTheme(templateTheme)}
+                    >
+                      <Icon name="plus" size={13} />
+                      新建主题
+                    </button>
+                  </div>
                 </div>
 
                 <div className="theme-grid">
@@ -706,9 +862,18 @@ export function SettingsPanel({
                         >
                           <span
                             className="theme-swatch"
+                            data-style={theme.style}
                             style={{
-                              background: theme.background,
-                              borderColor: rgba(theme.accent, 0.45),
+                              background:
+                                theme.style === 'paper' ||
+                                theme.style === 'glass' ||
+                                (theme.backgroundMode ?? 'solid') !== 'solid'
+                                  ? themeBackground(theme)
+                                  : theme.background,
+                              borderColor:
+                                theme.style === 'paper'
+                                  ? rgba(theme.accent, 0.55)
+                                  : rgba(theme.accent, 0.45),
                             }}
                           >
                             <i style={{ background: theme.accent }} />
@@ -723,7 +888,14 @@ export function SettingsPanel({
                           <span className="theme-card-text">
                             <strong>{theme.name}</strong>
                             <small>
+                              {styleNames[theme.style]} ·{' '}
                               {theme.tone === 'light' ? '日间' : '月间'} · 光晕 {theme.glow}%
+                              {theme.backgroundMode && theme.backgroundMode !== 'solid'
+                                ? theme.backgroundMode === 'duo'
+                                  ? ' · 双色'
+                                  : ' · 三色'
+                                : ''}
+                              {theme.media ? (theme.media.kind === 'video' ? ' · 视频' : ' · 贴纸') : ''}
                             </small>
                           </span>
                           {active && <span className="theme-active-dot" />}
@@ -758,7 +930,7 @@ export function SettingsPanel({
                     <div className="settings-pane-head compact">
                       <div>
                         <h4>{builtinThemes.some((theme) => theme.id === draft.id) ? '编辑主题' : '自定义主题'}</h4>
-                        <p>调整主色、底色和背景光晕，右侧即时预览。</p>
+                        <p>配色和风格分开调；风格给几何与质感，下面五项微调可以逐项覆盖，文字色可跟随背景亮度或固定白 / 黑，右侧即时预览。背景支持双色 / 三色渐变和贴纸、视频素材。</p>
                       </div>
                       <button
                         type="button"
@@ -781,6 +953,33 @@ export function SettingsPanel({
                           />
                         </label>
                         <div className="settings-field-inline">
+                          <span>风格</span>
+                          <div className="density-picker wide">
+                            {styleOptions.map(([value, label]) => (
+                              <button
+                                key={value}
+                                type="button"
+                                className={draft.style === value ? 'on' : ''}
+                                onClick={() =>
+                                  setDraft({
+                                    ...draft,
+                                    style: value,
+                                    tone: value === 'paper' ? 'light' : draft.tone,
+                                    glow:
+                                      value === 'paper' ? Math.min(draft.glow, 30) : draft.glow,
+                                    background:
+                                      value === 'paper' && isDarkColor(draft.background)
+                                        ? paperBackground
+                                        : draft.background,
+                                  })
+                                }
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="settings-field-inline">
                           <span>明暗模式</span>
                           <div className="density-picker">
                             {(
@@ -793,12 +992,67 @@ export function SettingsPanel({
                                 key={value}
                                 type="button"
                                 className={draft.tone === value ? 'on' : ''}
+                                disabled={draft.style === 'paper' && value === 'dark'}
+                                title={
+                                  draft.style === 'paper' && value === 'dark'
+                                    ? '纸稿风格固定为日间'
+                                    : undefined
+                                }
                                 onClick={() => setDraft({ ...draft, tone: value })}
                               >
                                 {label}
                               </button>
                             ))}
                           </div>
+                        </div>
+                        <div className="settings-field-inline">
+                          <span title="跟随背景亮度自动选白字或黑字，也可以手动固定">文字色</span>
+                          <div className="density-picker">
+                            {(
+                              [
+                                ['auto', '跟随'],
+                                ['white', '白字'],
+                                ['black', '黑字'],
+                              ] as Array<[ThemeTextTone, string]>
+                            ).map(([value, label]) => (
+                              <button
+                                key={value}
+                                type="button"
+                                className={draft.textTone === value ? 'on' : ''}
+                                onClick={() => setDraft({ ...draft, textTone: value })}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="theme-tweaks">
+                          <span className="theme-tweaks-label">微调</span>
+                          {tweakOptions.map((item) => (
+                            <div className="settings-field-inline" key={item.key}>
+                              <span title={item.hint}>{item.label}</span>
+                              <div className="density-picker wide">
+                                {item.options.map(([value, label]) => (
+                                  <button
+                                    key={value}
+                                    type="button"
+                                    className={draft.tweaks[item.key] === value ? 'on' : ''}
+                                    onClick={() =>
+                                      setDraft({
+                                        ...draft,
+                                        tweaks: {
+                                          ...draft.tweaks,
+                                          [item.key]: value,
+                                        } as ThemeTweaks,
+                                      })
+                                    }
+                                  >
+                                    {label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                         <label className="settings-field-inline">
                           <span>主色</span>
@@ -824,36 +1078,182 @@ export function SettingsPanel({
                             <code>{draft.background}</code>
                           </div>
                         </label>
+                        <div className="theme-tweaks">
+                          <span className="theme-tweaks-label">背景</span>
+                          <div className="settings-field-inline">
+                            <span>渐变</span>
+                            <div className="density-picker wide">
+                              {backgroundModes.map(([value, label]) => (
+                                <button
+                                  key={value}
+                                  type="button"
+                                  className={draft.backgroundMode === value ? 'on' : ''}
+                                  onClick={() => setDraft({ ...draft, backgroundMode: value })}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          {draft.backgroundMode !== 'solid' && (
+                            <label className="settings-field-inline">
+                              <span>第二色</span>
+                              <div className="color-field">
+                                <input
+                                  type="color"
+                                  value={draft.background2}
+                                  onChange={(event) =>
+                                    setDraft({ ...draft, background2: event.target.value })
+                                  }
+                                />
+                                <code>{draft.background2}</code>
+                              </div>
+                            </label>
+                          )}
+                          {draft.backgroundMode === 'trio' && (
+                            <label className="settings-field-inline">
+                              <span>第三色</span>
+                              <div className="color-field">
+                                <input
+                                  type="color"
+                                  value={draft.background3}
+                                  onChange={(event) =>
+                                    setDraft({ ...draft, background3: event.target.value })
+                                  }
+                                />
+                                <code>{draft.background3}</code>
+                              </div>
+                            </label>
+                          )}
+                          <div className="settings-field-inline">
+                            <span>素材</span>
+                            {draft.media ? (
+                              <div className="theme-media-field">
+                                <span className="theme-media-chip" title={draft.media.path}>
+                                  <Icon name={draft.media.kind === 'video' ? 'film' : 'image'} size={12} />
+                                  <b>{fileName(draft.media.path)}</b>
+                                </span>
+                                <button
+                                  type="button"
+                                  className="icon-btn"
+                                  aria-label="移除背景素材"
+                                  title="移除背景素材"
+                                  onClick={() => setDraft({ ...draft, media: null })}
+                                >
+                                  <Icon name="x" size={12} />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="theme-media-field">
+                                <button
+                                  type="button"
+                                  className="ghost-btn"
+                                  onClick={() => void pickThemeMedia('image')}
+                                >
+                                  <Icon name="image" size={12} />
+                                  选择图片
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ghost-btn"
+                                  onClick={() => void pickThemeMedia('video')}
+                                >
+                                  <Icon name="film" size={12} />
+                                  选择视频
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          {draft.media && (
+                            <>
+                              <div className="settings-field-inline">
+                                <span>遮罩浓度</span>
+                                <div className="range-field">
+                                  <input
+                                    type="range"
+                                    min={0}
+                                    max={100}
+                                    step={2}
+                                    value={draft.media.dim}
+                                    onChange={(event) =>
+                                      setDraft({
+                                        ...draft,
+                                        media: { ...draft.media!, dim: Number(event.target.value) },
+                                      })
+                                    }
+                                  />
+                                  <span className="mono">{draft.media.dim}%</span>
+                                </div>
+                              </div>
+                              <div className="settings-field-inline">
+                                <span>素材模糊</span>
+                                <div className="range-field">
+                                  <input
+                                    type="range"
+                                    min={0}
+                                    max={40}
+                                    step={1}
+                                    value={draft.media.blur}
+                                    onChange={(event) =>
+                                      setDraft({
+                                        ...draft,
+                                        media: { ...draft.media!, blur: Number(event.target.value) },
+                                      })
+                                    }
+                                  />
+                                  <span className="mono">{draft.media.blur}px</span>
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
                         <div className="settings-field-inline">
                           <span>背景光晕</span>
                           <div className="range-field">
                             <input
                               type="range"
                               min={0}
-                              max={100}
+                              max={draft.style === 'paper' ? 30 : 100}
                               step={2}
-                              value={draft.glow}
+                              value={draft.style === 'paper' ? Math.min(draft.glow, 30) : draft.glow}
                               onChange={(event) =>
                                 setDraft({ ...draft, glow: Number(event.target.value) })
                               }
+                              title={draft.style === 'paper' ? '纸稿风格上限定为 30%' : undefined}
                             />
-                            <span className="mono">{draft.glow}%</span>
+                            <span className="mono">
+                              {draft.style === 'paper' ? Math.min(draft.glow, 30) : draft.glow}%
+                            </span>
                           </div>
                         </div>
                       </div>
 
                       <div
                         className="theme-preview-large"
+                        data-style={draft.style}
+                        data-tone={draft.tone}
+                        data-ink={themeTextInk({ ...draft, builtin: false })}
+                        data-radius={draftLook?.radius}
+                        data-texture={draftLook?.texture}
+                        data-font={draftLook?.font}
+                        data-shadow={draftLook?.shadow}
                         style={{
-                          background: draft.background,
+                          background: themeBackground(draft),
                           borderColor: rgba(draft.accent, 0.4),
                         }}
                       >
+                        <ThemeBackdrop theme={draft} className="theme-preview-backdrop" />
+                        <span
+                          className="theme-preview-texture"
+                          data-texture={draftLook?.texture}
+                          style={{ '--preview-line': rgba(draft.accent, 0.22) } as CSSProperties}
+                        />
                         <span
                           className="theme-preview-glow"
                           style={{
                             background: `radial-gradient(circle, ${rgba(draft.accent, 0.5)}, transparent 68%)`,
-                            opacity: 0.25 + draft.glow / 160,
+                            opacity:
+                              draft.style === 'paper' ? 0.12 : 0.25 + draft.glow / 160,
                           }}
                         />
                         <div className="theme-preview-window">
@@ -866,7 +1266,8 @@ export function SettingsPanel({
                           </div>
                         </div>
                         <small>
-                          {draft.tone === 'light' ? '日间预览' : '月间预览'} · {draft.name || '未命名主题'}
+                          {styleNames[draft.style]}预览 ·{' '}
+                          {draft.name || '未命名主题'}
                         </small>
                       </div>
                     </div>
@@ -1724,17 +2125,127 @@ export function SettingsPanel({
                 </div>
               </section>
             )}
+
+            {tab === 'about' && (
+              <section className="settings-pane about-pane">
+                <div className="settings-pane-head">
+                  <div>
+                    <h4>关于 DSH 中枢</h4>
+                    <p>
+                      围绕 DSH 引擎的本地桌面工作台：Electron 负责窗口与系统能力，React
+                      负责会话桌面、盒子布局和模块装配。
+                    </p>
+                  </div>
+                  <span className="about-version mono">{appVersion ? `v${appVersion}` : '开发版'}</span>
+                </div>
+
+                <div className="about-hero">
+                  <span className="about-mark">DSH</span>
+                  <div>
+                    <strong>DSH 中枢 · 集成工作台</strong>
+                    <p>
+                      把引擎的会话、记忆、技能与本机工具投射到一块可编排的桌面上。外壳以 MIT
+                      许可开源，引擎本体不随仓库分发。
+                    </p>
+                  </div>
+                </div>
+
+                <div className="about-links">
+                  <button
+                    type="button"
+                    className="about-link"
+                    onClick={() => openLink('https://github.com/sessionhive/dsh-workbench')}
+                  >
+                    <span className="about-link-icon">
+                      <Icon name="git" size={15} />
+                    </span>
+                    <span>
+                      <strong>GitHub 仓库</strong>
+                      <small>github.com/sessionhive/dsh-workbench</small>
+                    </span>
+                    <Icon name="arrowUpRight" size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    className="about-link"
+                    onClick={() => openLink('https://github.com/sessionhive/dsh-collab')}
+                  >
+                    <span className="about-link-icon">
+                      <Icon name="book" size={15} />
+                    </span>
+                    <span>
+                      <strong>协作插件 dsh-collab</strong>
+                      <small>角色卡、记忆、技能与工单的数据来源</small>
+                    </span>
+                    <Icon name="arrowUpRight" size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    className="about-link"
+                    onClick={() => openLink('https://github.com/sessionhive/dsh-workbench/tree/main/docs')}
+                  >
+                    <span className="about-link-icon">
+                      <Icon name="filePlus" size={15} />
+                    </span>
+                    <span>
+                      <strong>使用文档</strong>
+                      <small>使用流程、引擎接入、项目结构与部署清单</small>
+                    </span>
+                    <Icon name="arrowUpRight" size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    className="about-link"
+                    onClick={() => openLink('https://github.com/sessionhive/dsh-workbench/issues')}
+                  >
+                    <span className="about-link-icon">
+                      <Icon name="bug" size={15} />
+                    </span>
+                    <span>
+                      <strong>问题与建议</strong>
+                      <small>遇到 bug 或有新点子，欢迎开 Issue</small>
+                    </span>
+                    <Icon name="arrowUpRight" size={13} />
+                  </button>
+                </div>
+
+                <div className="about-star">
+                  <span className="about-star-icon">
+                    <Icon name="star" size={18} />
+                  </span>
+                  <div>
+                    <strong>觉得好用的话，给仓库点一颗星</strong>
+                    <p>
+                      一颗 Star 是最直接的支持，也能让更多人发现这个项目。欢迎在 Issues
+                      里聊想法，或者直接提 PR。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={() => openLink('https://github.com/sessionhive/dsh-workbench')}
+                  >
+                    <Icon name="star" size={13} />
+                    去点星
+                  </button>
+                </div>
+
+                <p className="settings-note">
+                  工作台只做本地壳与界面，不收集遥测；会话、主题、路径与背景素材路径都保存在你自己的机器上。
+                </p>
+              </section>
+            )}
           </div>
         </div>
 
         <div className="modal-foot">
-          <span>自动保存 · 关闭后生效</span>
+          <span>{draft ? '完成时自动保存当前主题' : '自动保存 · 关闭后生效'}</span>
           <span className="spacer" />
           <span className="settings-foot-theme">
             <i style={{ background: activeTheme.accent }} />
             {activeTheme.name}
           </span>
-          <button type="button" className="primary-btn" onClick={onClose}>
+          <button type="button" className="primary-btn" onClick={finishSettings}>
             <Icon name="check" size={13} />
             完成
           </button>
