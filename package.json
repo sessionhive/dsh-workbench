@@ -28,7 +28,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "openfilm": "^0.3.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
@@ -59,10 +58,6 @@
       "package.json"
     ],
     "asar": true,
-    "asarUnpack": [
-      "electron/openfilm-studio-process.mjs",
-      "node_modules/openfilm/**/*"
-    ],
     "npmRebuild": false,
     "artifactName": "dsh-workbench-${version}-${arch}.${ext}",
     "linux": {

@@ -11,12 +11,9 @@ import type {
   FilePreviewResult,
   HealthReport,
   PathDefaults,
-  StyleImageResult,
-  StyleScanResult,
+  ImageFileResult,
   ToolScanResult,
 } from './engine/types';
-import type { OpenfilmStatus } from './openfilm/types';
-import type { AgentDisplayStatus } from './agent-display/types';
 import type { SettingsInput } from './settings';
 import type {
   TerminalCwdEvent,
@@ -51,26 +48,12 @@ declare global {
       engineStart: () => Promise<EngineProcessInfo>;
       engineRestart: () => Promise<EngineProcessInfo>;
       onEngineStatus: (callback: (snapshot: EngineProcessInfo) => void) => () => void;
-      openfilmStatus: () => Promise<OpenfilmStatus>;
-      openfilmEnsure: () => Promise<OpenfilmStatus>;
-      openfilmOpenProject: (folder?: string) => Promise<OpenfilmStatus>;
-      openfilmChooseProject: () => Promise<{ canceled: boolean; path?: string }>;
-      openfilmOpenExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
-      onOpenfilmStatus: (callback: (snapshot: OpenfilmStatus) => void) => () => void;
       onWebviewZoom: (
         callback: (payload: { id: number; direction: 'in' | 'out' }) => void,
       ) => () => void;
       onWebviewNewTab: (
         callback: (payload: { id: number; url: string }) => void,
       ) => () => void;
-      onWebviewEscape: (
-        callback: (payload: { id: number }) => void,
-      ) => () => void;
-      agentDisplayStatus: () => Promise<AgentDisplayStatus>;
-      agentDisplayEnsure: () => Promise<AgentDisplayStatus>;
-      agentDisplayReinstall: () => Promise<AgentDisplayStatus>;
-      agentDisplayImport: () => Promise<AgentDisplayStatus>;
-      agentDisplayOpenExternal: () => Promise<{ ok: boolean; error?: string }>;
       defaultPaths: () => Promise<PathDefaults>;
       version: () => Promise<string>;
       pickEngineRoot: (defaultPath?: string) => Promise<string | null>;
@@ -87,8 +70,7 @@ declare global {
         target: string,
       ) => Promise<{ ok: boolean; root?: string; relative?: string; error?: string }>;
       previewFile: (root: string, relative: string) => Promise<FilePreviewResult>;
-      readImage: (root: string, relative: string) => Promise<StyleImageResult>;
-      scanStyles: (root?: string) => Promise<StyleScanResult>;
+      readImage: (root: string, relative: string) => Promise<ImageFileResult>;
       healthCheck: (engineSettings: SettingsInput['engine']) => Promise<HealthReport>;
       writeFile: (
         root: string,

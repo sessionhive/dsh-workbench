@@ -21,7 +21,7 @@ export type ModuleCategory = 'core' | 'workspace' | 'knowledge' | 'session';
  * 模块来源：标明这块能力是谁的，避免把外部/引擎内容误当自研代码发布。
  * - workbench：本仓库自研
  * - engine：DSH 引擎官方界面/能力
- * - third-party：第三方项目或工具（如 OpenFilm）
+ * - third-party：第三方项目或工具（需自行安装，不随仓库分发）
  */
 export type ModuleOrigin = 'workbench' | 'engine' | 'third-party';
 

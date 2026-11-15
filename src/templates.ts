@@ -1,5 +1,6 @@
 import type { EngineSnapshot } from './engine/types';
 import { createDefaultModules } from './moduleDefaults';
+import { localTemplateExtras } from './modules/local';
 import type { HarnessBinding, IconName, Session } from './types';
 
 export type TemplateSource = 'builtin' | 'custom' | 'engine';
@@ -174,16 +175,16 @@ const builtinTemplates: SessionTemplate[] = [
   {
     id: 'builtin-video',
     name: '视频剪辑',
-    description: '代码化成片：agent 写 film.html 与分镜页，工作台内嵌 OpenFilm Studio 精修，ffmpeg 渲染；适合技术介绍、产品演示与信息型短片。',
+    description: '把脚本、分镜、素材与渲染串成一条流水线：文件、网页、终端和记忆配合，产出可交付的成片。',
     role: 'Director · 视频制作',
     scene: '视频',
     model: 'DSH 引擎',
     color: '#e468d4',
     icon: 'monitor',
-    summary: '负责从脚本、分镜、配音到合成渲染的整条流水线，素材与成片留在会话目录，风格配方沉淀进长期记忆。',
-    modules: ['neuron.view', 'openfilm.editor', 'files.browser', 'web.search', 'terminal.console', 'memory.search', 'todo.list', ...BASE_MODULES],
+    summary: '负责从脚本、分镜到合成渲染的整条流水线，素材与成片留在会话目录，风格配方沉淀进长期记忆。',
+    modules: ['neuron.view', 'files.browser', 'web.search', 'terminal.console', 'memory.search', 'todo.list', ...BASE_MODULES],
     source: 'builtin',
-    tags: ['视频', 'OpenFilm', '剪辑'],
+    tags: ['视频', '分镜', '渲染'],
   },
   {
     id: 'builtin-blank',
@@ -267,7 +268,17 @@ export function buildTemplates(
     tags: Array.isArray(template.tags) ? template.tags : ['自定义'],
   }));
 
-  return [...builtinTemplates, ...custom, ...engineTemplates];
+  const withLocal = (template: SessionTemplate): SessionTemplate => {
+    const extras = localTemplateExtras[template.id] ?? [];
+    if (!extras.length) return template;
+    const modules = [...template.modules];
+    for (const moduleId of extras) {
+      if (!modules.includes(moduleId)) modules.push(moduleId);
+    }
+    return { ...template, modules };
+  };
+
+  return [...builtinTemplates.map(withLocal), ...custom.map(withLocal), ...engineTemplates];
 }
 
 let templateSequence = 0;

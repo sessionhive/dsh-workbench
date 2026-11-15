@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('desktop', {
+const api = {
   minimize: () => ipcRenderer.send('window:minimize'),
   close: () => ipcRenderer.send('window:close'),
   setCloseToTray: (enabled) => ipcRenderer.invoke('app:set-close-to-tray', Boolean(enabled)),
@@ -32,16 +32,6 @@ contextBridge.exposeInMainWorld('desktop', {
     ipcRenderer.on('engine:status', listener);
     return () => ipcRenderer.removeListener('engine:status', listener);
   },
-  openfilmStatus: () => ipcRenderer.invoke('openfilm:status'),
-  openfilmEnsure: () => ipcRenderer.invoke('openfilm:ensure'),
-  openfilmOpenProject: (folder) => ipcRenderer.invoke('openfilm:open-project', folder),
-  openfilmChooseProject: () => ipcRenderer.invoke('openfilm:choose-project'),
-  openfilmOpenExternal: (url) => ipcRenderer.invoke('openfilm:open-external', url),
-  onOpenfilmStatus: (callback) => {
-    const listener = (_event, snapshot) => callback(snapshot);
-    ipcRenderer.on('openfilm:status', listener);
-    return () => ipcRenderer.removeListener('openfilm:status', listener);
-  },
   onWebviewZoom: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('webview:zoom', listener);
@@ -52,16 +42,6 @@ contextBridge.exposeInMainWorld('desktop', {
     ipcRenderer.on('webview:new-tab', listener);
     return () => ipcRenderer.removeListener('webview:new-tab', listener);
   },
-  onWebviewEscape: (callback) => {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on('webview:escape', listener);
-    return () => ipcRenderer.removeListener('webview:escape', listener);
-  },
-  agentDisplayStatus: () => ipcRenderer.invoke('agent-display:status'),
-  agentDisplayEnsure: () => ipcRenderer.invoke('agent-display:ensure'),
-  agentDisplayReinstall: () => ipcRenderer.invoke('agent-display:reinstall'),
-  agentDisplayImport: () => ipcRenderer.invoke('agent-display:import'),
-  agentDisplayOpenExternal: () => ipcRenderer.invoke('agent-display:open-external'),
   defaultPaths: () => ipcRenderer.invoke('paths:defaults'),
   version: () => ipcRenderer.invoke('app:version'),
   pickEngineRoot: (defaultPath) => ipcRenderer.invoke('engine:pick-root', defaultPath),
@@ -74,7 +54,6 @@ contextBridge.exposeInMainWorld('desktop', {
   resolvePath: (root, target) => ipcRenderer.invoke('fs:resolve', { root, target }),
   previewFile: (root, relative) => ipcRenderer.invoke('fs:preview', { root, relative }),
   readImage: (root, relative) => ipcRenderer.invoke('fs:image', { root, relative }),
-  scanStyles: (root) => ipcRenderer.invoke('styles:scan', { root }),
   writeFile: (root, relative, text) => ipcRenderer.invoke('fs:write', { root, relative, text }),
   createDirectory: (root, relative, name) =>
     ipcRenderer.invoke('fs:mkdir', { root, relative, name }),
@@ -113,4 +92,17 @@ contextBridge.exposeInMainWorld('desktop', {
   openPath: (target) => ipcRenderer.invoke('shell:open-path', target),
   openEnginePath: (root, relative) => ipcRenderer.invoke('engine:open-path', { root, relative }),
   platform: process.platform,
-});
+};
+
+// 本地扩展：存在 electron/local/preload.cjs 时把它的桥接方法合并进来。
+let localApi = {};
+try {
+  localApi = require('./local/preload.cjs')(ipcRenderer) || {};
+} catch (error) {
+  const message = String((error && error.message) || error);
+  if (!/local[\/]preload\.cjs/.test(message)) {
+    console.warn('[local] preload unavailable', message);
+  }
+}
+
+contextBridge.exposeInMainWorld('desktop', { ...api, ...localApi });

@@ -7,13 +7,13 @@
 ## 1. 前提
 
 - Linux x86_64，建议 Ubuntu 22.04+、Debian 12+ 或同代发行版。
-- Node.js 20 或更高版本；使用 OpenFilm 剪辑时需要 22.2+。
+- Node.js 20 或更高版本。
 - 本机已安装 DSH 引擎，目录下能看到 `apps/cli/lib/bin.js`。
 - 引擎数据目录下能看到 `_meta/registry.json`。
 - 中文字体。最小安装的发行版可能没有 CJK 字体，界面中文会变成方框；Ubuntu/Debian 可安装 `fonts-noto-cjk`（或文泉驿）。
 - 不需要把引擎放进工作台安装目录，工作台通过路径设置或环境变量找到它。
 
-工作台不包含 DSH 引擎、模型凭据、`dsh-collab` 数据和任何第三方模块资源包。
+工作台不包含 DSH 引擎、模型凭据、`dsh-collab` 数据和任何第三方模块的代码或资源。
 
 ## 2. 安装
 
@@ -165,9 +165,6 @@ docker run --rm \
 
 **终端里没有提示符。**
 终端以非登录 shell 启动，不加载 `.bashrc` / `.zshrc` 里的交互配置。需要某个环境变量时，写进工作台启动环境或系统登录环境。
-
-**OpenFilm 模块打不开。**
-需要 Node.js 22.2+，并且本机已安装 OpenFilm/ffmpeg 依赖。工作台仓库不包含 OpenFilm 的资源包。
 
 **界面里的中文是方框。**
 系统缺少中文字体。Ubuntu/Debian 安装 `sudo apt install fonts-noto-cjk`，Arch 安装 `noto-fonts-cjk`，然后重启工作台。工作台的字体会按 Noto Sans CJK / 思源黑体 / 文泉驿的顺序回退。

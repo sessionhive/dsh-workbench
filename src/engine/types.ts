@@ -270,37 +270,11 @@ export interface FilePreviewResult {
   error?: string;
 }
 
-export interface StyleImageResult {
+export interface ImageFileResult {
   ok: boolean;
   size?: number;
   mime?: string;
   dataUrl?: string;
-  error?: string;
-}
-
-export interface StyleScanItem {
-  key: string;
-  category: string;
-  id: string;
-  title: string;
-  series: string;
-  relative: string;
-  stillRelative: string;
-}
-
-export interface StyleScanCategory {
-  name: string;
-  count: number;
-}
-
-export interface StyleScanResult {
-  ok: boolean;
-  root: string;
-  base: string;
-  missing?: boolean;
-  total: number;
-  categories: StyleScanCategory[];
-  items: StyleScanItem[];
   error?: string;
 }
 

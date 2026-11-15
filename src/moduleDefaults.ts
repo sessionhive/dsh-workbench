@@ -1,3 +1,4 @@
+import { localModuleDefaults } from './modules/local';
 import type { ModuleInstance, SlotId } from './modules/types';
 
 interface ModuleDefault {
@@ -19,11 +20,10 @@ export function isRemovedModule(moduleId: string): boolean {
   return REMOVED_MODULE_IDS.has(moduleId);
 }
 
-/** 所有内置模块的默认装配。新增模块在这里登记一次即可。 */
+/** 所有内置模块的默认装配。新增模块在这里登记一次即可；本地扩展模块随后合并。 */
 export const MODULE_DEFAULTS: Record<string, ModuleDefault> = {
   'neuron.view': { enabled: true, order: 1 },
   'session.chat': { enabled: false, order: 0 },
-  'openfilm.editor': { enabled: true, order: 2, slotOrders: { 'center.view': 2 } },
   'todo.list': { enabled: true, order: 1, slotOrders: { 'center.view': 3, 'detail.block': 1 } },
   'files.browser': { enabled: false, order: 4 },
   'web.search': { enabled: false, order: 5 },
@@ -31,8 +31,7 @@ export const MODULE_DEFAULTS: Record<string, ModuleDefault> = {
   'memory.search': { enabled: false, order: 3, slotOrders: { 'center.view': 6, 'detail.block': 3 } },
   'dispatch.timeline': { enabled: false, order: 7 },
   'run.status': { enabled: false, order: 8 },
-  'styles.library': { enabled: true, order: 9 },
-  'agent.display': { enabled: true, order: 10 },
+  ...localModuleDefaults,
 };
 
 export const DEFAULT_MODULE_ORDER = Object.keys(MODULE_DEFAULTS);

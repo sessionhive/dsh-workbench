@@ -18,6 +18,7 @@
 
 ### 变更
 
+- 外部模块（风格库、Agent 战术大屏、OpenFilm 剪辑）与对应主进程支持移出公共仓库，改由本地扩展目录按需加载；公开源码与发布包不再包含这部分代码、资源或依赖。
 - 打包配置写进 `package.json` 的 `build` 字段，`release/` 加入忽略列表。
 - 托盘图标在 Linux 上按 22px 读取。
 - 版本号顺延到 0.2.2；v0.2.1 保持原有的 Windows 发布内容不变。
@@ -29,7 +30,7 @@
 ### 已知限制
 
 - Linux 目前提供 x86_64，未提供 ARM64、Flatpak 或 Snap。
-- AppImage/deb 不包含 DSH 引擎、模型凭据、dsh-collab 数据或 OpenFilm 第三方资源。
+- AppImage/deb 不包含 DSH 引擎、模型凭据、dsh-collab 数据、第三方模块代码与资源，也不包含任何第三方工具。
 - Wayland 与部分 GPU 驱动下透明/模糊可能降级，可切 X11 或临时用 `--disable-gpu` 排查。
 
 [0.2.2]: https://github.com/sessionhive/dsh-workbench/releases/tag/v0.2.2

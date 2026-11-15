@@ -20,7 +20,24 @@ const { pathToFileURL } = require('url');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
 const { createEngineManager } = require('./engine-manager.cjs');
-const { createOpenfilmManager } = require('./openfilm-studio.cjs');
+
+// 本地扩展：存在 electron/local/runtime.cjs 时启用，公共仓库不包含该文件。
+let localRuntime = null;
+try {
+  localRuntime = require('./local/runtime.cjs');
+} catch (error) {
+  const message = String((error && error.message) || error);
+  if (!/local[\/]runtime\.cjs/.test(message)) {
+    console.warn('[local] runtime unavailable', message);
+  }
+}
+
+localRuntime?.register?.({
+  getMainWindow: () => mainWindow,
+  getStateDir: () => stateDir,
+  statOf,
+  isProtectedPath,
+});
 
 // 背景素材协议：只读转出用户显式选择的本机图片/视频，不把整块磁盘包成 file://。
 const MEDIA_MIME = {
@@ -444,7 +461,6 @@ let closeToTray = true;
 // DSH 引擎由工作台托管：启动时拉起 dsh web，退出时收掉；状态实时推给渲染层。
 // 引擎目录在存档读取后确定，所以管理器在 app ready 时创建。
 let engineManager = null;
-let openfilmManager = null;
 
 function createManagedEngine(paths) {
   const resolved = paths || defaultPaths();
@@ -468,15 +484,6 @@ const idleEngineStatus = () => ({
   engineDir: '',
   dataHome: '',
   startedAt: 0,
-});
-
-const idleOpenfilmStatus = () => ({
-  status: 'idle',
-  error: '',
-  attached: false,
-  origin: '',
-  editorUrl: '',
-  project: null,
 });
 
 // webview 只跑官方引擎页面：去掉宿主 preload，禁止 Node 集成。
@@ -511,28 +518,6 @@ app.on('web-contents-created', (_event, contents) => {
           id: contents.id,
           direction: direction === 'out' ? 'out' : 'in',
         });
-      });
-    }
-    // 战术大屏全屏时焦点在页面里，Esc 到不了工作台：转给宿主决定是否退出全屏。
-    if (contents.session === session.fromPartition('persist:workbench-display')) {
-      // 三维主题按作者写法从 jsdelivr 取 three.js；国内直连经常整段断开，
-      // 只给大屏这个会话把同版本文件换到 npm 镜像，页面本身不改。
-      contents.session.webRequest.onBeforeRequest(
-        { urls: ['https://cdn.jsdelivr.net/npm/three@0.147.0/*'] },
-        (details, callback) => {
-          callback({
-            redirectURL: details.url.replace(
-              'https://cdn.jsdelivr.net/npm/three@0.147.0/',
-              'https://registry.npmmirror.com/three/0.147.0/files/',
-            ),
-          });
-        },
-      );
-      contents.on('before-input-event', (_inputEvent, input) => {
-        if (input.type !== 'keyDown' || input.key !== 'Escape') return;
-        const host = contents.hostWebContents;
-        if (!host || host.isDestroyed()) return;
-        host.send('webview:escape', { id: contents.id });
       });
     }
   }
@@ -1731,170 +1716,6 @@ function createWindow() {
   }
 }
 
-// ── 战术大屏（外部项目）资源托管 ─────────────────────────────────────────
-// 来源 cyberdaddyleo/agent-display，PolyForm Noncommercial 许可。
-// 文件只落在用户数据目录，不并入仓库；LICENSE 与大屏页面一起保存。
-const { patchAgentDisplay, PATCH_TAG } = require('./agent-display-patch.cjs');
-const AGENT_DISPLAY_REPO = 'cyberdaddyleo/agent-display';
-const AGENT_DISPLAY_MAX_BYTES = 8 * 1024 * 1024;
-const AGENT_DISPLAY_SOURCES = [
-  {
-    url: `https://api.github.com/repos/${AGENT_DISPLAY_REPO}/contents/index.html`,
-    headers: { Accept: 'application/vnd.github.raw', 'User-Agent': 'dsh-workbench' },
-  },
-  {
-    url: `https://raw.githubusercontent.com/${AGENT_DISPLAY_REPO}/main/index.html`,
-    headers: { 'User-Agent': 'dsh-workbench' },
-  },
-];
-const AGENT_DISPLAY_LICENSE_SOURCE = {
-  url: `https://api.github.com/repos/${AGENT_DISPLAY_REPO}/contents/LICENSE`,
-  headers: { Accept: 'application/vnd.github.raw', 'User-Agent': 'dsh-workbench' },
-};
-
-function agentDisplayDir() {
-  return path.join(app.getPath('userData'), 'assets', 'agent-display');
-}
-
-function agentDisplayFile() {
-  return path.join(agentDisplayDir(), 'index.html');
-}
-
-function agentDisplayStatus(error) {
-  const file = agentDisplayFile();
-  try {
-    const stat = fs.statSync(file);
-    return {
-      ok: true,
-      path: file,
-      url: pathToFileURL(file).href,
-      size: stat.size,
-      updatedAt: stat.mtimeMs,
-    };
-  } catch {
-    return { ok: false, path: file, error: error || '本地还没有安装战术大屏' };
-  }
-}
-
-function downloadText(url, headers, limit, redirects = 0) {
-  return new Promise((resolve, reject) => {
-    const req = https.get(url, { headers, timeout: 30000 }, (res) => {
-      const status = res.statusCode ?? 0;
-      if (status >= 300 && status < 400 && res.headers.location && redirects < 3) {
-        res.resume();
-        resolve(
-          downloadText(new URL(res.headers.location, url).href, headers, limit, redirects + 1),
-        );
-        return;
-      }
-      if (status !== 200) {
-        res.resume();
-        reject(new Error(`HTTP ${status}`));
-        return;
-      }
-      const chunks = [];
-      let size = 0;
-      res.on('data', (chunk) => {
-        size += chunk.length;
-        if (size > limit) {
-          req.destroy(new Error('资源超过大小上限'));
-          return;
-        }
-        chunks.push(chunk);
-      });
-      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-      res.on('error', reject);
-    });
-    req.on('timeout', () => req.destroy(new Error('下载超时')));
-    req.on('error', reject);
-  });
-}
-
-/** 校验并落到用户数据目录；只接受真正的大屏页面。 */
-function storeAgentDisplay(body) {
-  if (!body || body.length < 100000 || !/<html[\s>]/i.test(body) || !/agent-series-theme/.test(body)) {
-    throw new Error('文件看起来不是 Agent 战术大屏的 index.html');
-  }
-  fs.mkdirSync(agentDisplayDir(), { recursive: true });
-  // 上游原样留一份，运行时加载的是打了数据桥补丁的衍生页；更新时重新生成。
-  fs.writeFileSync(path.join(agentDisplayDir(), 'index.upstream.html'), body);
-  const tmp = `${agentDisplayFile()}.tmp`;
-  fs.writeFileSync(tmp, patchAgentDisplay(body));
-  fs.renameSync(tmp, agentDisplayFile());
-}
-
-/** 旧安装（补丁版本落后或缺失）就地补一次；始终以未改动的上游文件为底重新生成。 */
-function ensureAgentDisplayPatch() {
-  const file = agentDisplayFile();
-  if (!fs.existsSync(file)) return;
-  const html = fs.readFileSync(file, 'utf8');
-  if (html.includes(PATCH_TAG)) return;
-  const upstream = path.join(agentDisplayDir(), 'index.upstream.html');
-  const base = fs.existsSync(upstream) ? fs.readFileSync(upstream, 'utf8') : html;
-  if (!fs.existsSync(upstream)) fs.writeFileSync(upstream, base);
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, patchAgentDisplay(base));
-  fs.renameSync(tmp, file);
-}
-
-async function downloadAgentDisplay() {
-  let lastError = '';
-  for (const source of AGENT_DISPLAY_SOURCES) {
-    try {
-      const body = await downloadText(source.url, source.headers, AGENT_DISPLAY_MAX_BYTES);
-      storeAgentDisplay(body);
-      try {
-        const license = await downloadText(
-          AGENT_DISPLAY_LICENSE_SOURCE.url,
-          AGENT_DISPLAY_LICENSE_SOURCE.headers,
-          64 * 1024,
-        );
-        fs.writeFileSync(path.join(agentDisplayDir(), 'LICENSE'), license);
-      } catch {
-        /* 许可文件下载失败不阻塞大屏使用 */
-      }
-      return agentDisplayStatus();
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-    }
-  }
-  return {
-    ...agentDisplayStatus(`大屏资源下载失败：${lastError || '网络不可达'}`),
-    error: `大屏资源下载失败：${lastError || '网络不可达'}`,
-  };
-}
-
-ipcMain.handle('agent-display:status', () => agentDisplayStatus());
-ipcMain.handle('agent-display:ensure', async () => {
-  const current = agentDisplayStatus();
-  if (!current.ok) return downloadAgentDisplay();
-  ensureAgentDisplayPatch();
-  return agentDisplayStatus();
-});
-ipcMain.handle('agent-display:reinstall', () => downloadAgentDisplay());
-ipcMain.handle('agent-display:import', async () => {
-  const picked = await dialog.showOpenDialog({
-    title: '选择 agent-display 的 index.html',
-    filters: [{ name: 'HTML 页面', extensions: ['html', 'htm'] }],
-    properties: ['openFile'],
-  });
-  if (picked.canceled || !picked.filePaths[0]) {
-    return { ok: false, canceled: true, error: '已取消导入' };
-  }
-  try {
-    storeAgentDisplay(fs.readFileSync(picked.filePaths[0], 'utf8'));
-    return agentDisplayStatus();
-  } catch (error) {
-    return { ok: false, error: `导入失败：${error instanceof Error ? error.message : String(error)}` };
-  }
-});
-ipcMain.handle('agent-display:open-external', async () => {
-  const current = agentDisplayStatus();
-  if (!current.ok) return { ok: false, error: current.error };
-  await shell.openExternal(current.url);
-  return { ok: true };
-});
-
 ipcMain.on('window:minimize', () => {
   if (mainWindow) mainWindow.minimize();
 });
@@ -1955,26 +1776,6 @@ ipcMain.handle('engine:start', () => (engineManager ? engineManager.start() : id
 
 ipcMain.handle('engine:restart', () =>
   engineManager ? engineManager.restart() : idleEngineStatus(),
-);
-
-ipcMain.handle('openfilm:status', () =>
-  openfilmManager ? openfilmManager.snapshot() : idleOpenfilmStatus(),
-);
-
-ipcMain.handle('openfilm:ensure', () =>
-  openfilmManager ? openfilmManager.ensure() : idleOpenfilmStatus(),
-);
-
-ipcMain.handle('openfilm:open-project', (_event, folder) =>
-  openfilmManager ? openfilmManager.openProject(folder) : idleOpenfilmStatus(),
-);
-
-ipcMain.handle('openfilm:choose-project', () =>
-  openfilmManager ? openfilmManager.chooseProject() : { canceled: true },
-);
-
-ipcMain.handle('openfilm:open-external', (_event, url) =>
-  openfilmManager ? openfilmManager.openExternal(url) : { ok: false, error: 'Studio 尚未初始化' },
 );
 
 ipcMain.handle('health:check', (_event, engineSettings) => {
@@ -2242,85 +2043,6 @@ ipcMain.handle('fs:preview', (_event, payload) => {
   }
 });
 
-/** 风格库默认放在状态目录下，避免把第三方素材并进仓库。 */
-function defaultStyleRoot() {
-  return path.join(stateDir || app.getPath('appData'), 'animation-styles');
-}
-
-function styleLibraryBase(input) {
-  const candidate = path.resolve(String(input || '').trim() || defaultStyleRoot());
-  const nested = path.join(candidate, '风格提示词');
-  if (statOf(nested).dir) return { root: candidate, base: '风格提示词' };
-  if (path.basename(candidate) === '风格提示词' && statOf(candidate).dir) {
-    return { root: path.dirname(candidate), base: '风格提示词' };
-  }
-  return { root: candidate, base: '' };
-}
-
-/** 只读扫描风格库：分类子目录下的 .md 与同名静帧，不读正文。 */
-function scanStyleLibrary(input) {
-  const resolved = styleLibraryBase(input);
-  const baseAbs = resolved.base ? path.join(resolved.root, resolved.base) : resolved.root;
-  if (isProtectedPath(baseAbs)) return { ok: false, error: '受保护的引擎目录不可扫描' };
-  if (!statOf(baseAbs).dir) {
-    return { ok: true, root: resolved.root, base: resolved.base, missing: true, total: 0, categories: [], items: [] };
-  }
-  let dirs = [];
-  try {
-    dirs = fs.readdirSync(baseAbs, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-  } catch (error) {
-    return { ok: false, error: String(error.message || error), root: resolved.root, base: resolved.base, total: 0, categories: [], items: [] };
-  }
-  dirs.sort((a, b) => a.localeCompare(b, 'zh'));
-  const items = [];
-  const categories = [];
-  const stillExts = ['.jpg', '.jpeg', '.png', '.webp'];
-  for (const dir of dirs) {
-    const dirAbs = path.join(baseAbs, dir);
-    let entries = [];
-    try {
-      entries = fs.readdirSync(dirAbs, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    const fileNames = new Set(entries.filter((entry) => entry.isFile()).map((entry) => entry.name));
-    const docs = entries
-      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
-      .map((entry) => entry.name)
-      .sort((a, b) => a.localeCompare(b, 'zh', { numeric: true }));
-    if (!docs.length) continue;
-    categories.push({ name: dir, count: docs.length });
-    for (const doc of docs) {
-      const stem = doc.slice(0, -3);
-      const underscore = stem.indexOf('_');
-      const id = underscore >= 0 ? stem.slice(0, underscore) : stem;
-      const title = underscore >= 0 ? stem.slice(underscore + 1) : stem;
-      const series = (id.match(/^[A-Za-z]+/) || [id])[0].toUpperCase();
-      const still = stillExts.map((ext) => `${stem}${ext}`).find((name) => fileNames.has(name)) || '';
-      const prefix = resolved.base ? `${resolved.base}/` : '';
-      items.push({
-        key: `${dir}/${stem}`,
-        category: dir,
-        id,
-        title: title || id,
-        series,
-        relative: `${prefix}${dir}/${doc}`,
-        stillRelative: still ? `${prefix}${dir}/${still}` : '',
-      });
-    }
-  }
-  return {
-    ok: true,
-    root: resolved.root,
-    base: resolved.base,
-    missing: false,
-    total: items.length,
-    categories,
-    items,
-  };
-}
-
-ipcMain.handle('styles:scan', (_event, payload) => scanStyleLibrary(payload && payload.root));
 
 const IMAGE_MIME = {
   '.jpg': 'image/jpeg',
@@ -2330,7 +2052,7 @@ const IMAGE_MIME = {
   '.gif': 'image/gif',
 };
 
-/** 风格库静帧只读转 data URL；限制类型与大小，避免把二进制塞进存档。 */
+/** 图片只读转 data URL；限制类型与大小，避免把二进制塞进存档。 */
 ipcMain.handle('fs:image', (_event, payload) => {
   const root = payload && payload.root ? path.resolve(String(payload.root)) : '';
   const target = root ? resolveInside(root, payload.relative || '') : null;
@@ -2564,13 +2286,7 @@ if (!captureMode && !app.requestSingleInstanceLock()) {
     const stored = readJson(stateFilePath());
     if (stored?.settings?.workbench?.closeToTray === false) closeToTray = false;
     engineManager = createManagedEngine(resolveEnginePaths(stored?.settings?.engine));
-    openfilmManager = createOpenfilmManager({
-      onUpdate: (snapshot) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('openfilm:status', snapshot);
-        }
-      },
-    });
+    localRuntime?.attach?.();
     createWindow();
     createTray();
     void engineManager.start();
@@ -2584,7 +2300,7 @@ if (!captureMode && !app.requestSingleInstanceLock()) {
     isQuitting = true;
     killAllTerminals();
     engineManager?.quit();
-    openfilmManager?.quit();
+    localRuntime?.shutdown?.();
   });
 
   app.on('window-all-closed', () => {

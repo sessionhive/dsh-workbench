@@ -238,4 +238,4 @@ Linux 包用 electron-builder 生成，配置在 `package.json` 的 `build` 字�
 - Wayland、透明窗口和 GPU 驱动差异可能让背景模糊降级，必要时切 X11 或加 `--disable-gpu` 验证。
 - 会话与 Harness 会话的定位依赖标题匹配，DSH 页面结构大改时可能需要重新绑定。
 - 引擎是外部依赖；没有引擎时外壳可以启动，但引擎视图与会话数据为空。
-- AppImage/deb 不包含 OpenFilm 的第三方资源与 ffmpeg，相关模块需要本地自备。
+- AppImage/deb 不包含任何第三方模块的代码、资源与 ffmpeg。

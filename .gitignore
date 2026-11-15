@@ -7,3 +7,8 @@ release/
 shot*.png
 .DS_Store
 Thumbs.db
+
+# 本地扩展：只在装了扩展的机器上存在，不进入仓库和公开发布包
+src/modules/local-modules/
+electron/local/
+.vite-verify/
