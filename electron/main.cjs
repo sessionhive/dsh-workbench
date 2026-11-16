@@ -105,12 +105,13 @@ function defaultPaths() {
   const dataPath =
     process.env.DSH_HOME ||
     firstExistingDir([
+      path.join(root, 'data', 'dev', '.dsh'),
       path.join(root, 'engine-data', '.dsh'),
       path.join(home, '.dsh'),
       path.join(home, '.config', 'dsh'),
       path.join(home, '.local', 'share', 'dsh'),
     ]) ||
-    (linux && app.isPackaged ? path.join(home, '.dsh') : path.join(root, 'engine-data', '.dsh'));
+    (linux && app.isPackaged ? path.join(home, '.dsh') : path.join(root, 'data', 'dev', '.dsh'));
   const workspacePath = sourceLayout
     ? path.join(root, 'workspace')
     : linux
@@ -129,7 +130,16 @@ function defaultPaths() {
         ? path.join(app.getPath('userData'), 'tools')
         : path.join(root, 'tools'),
     // 本地语音模型放在程序同级目录，方便整体搬走；安装后不随仓库分发。
-    localTtsRoot: path.join(root, 'local-tts', 'GPT-SoVITS'),
+    // 目录重排后 root 会变成 Workbench\app，模型可能在上层的 models\local-tts，
+    // 所以按「环境变量 → 同级 → 上级 → 上级 models」的顺序探测，取第一个存在的。
+    localTtsRoot:
+      process.env.DSH_LOCAL_TTS_ROOT ||
+      firstExistingDir([
+        path.join(root, 'local-tts', 'GPT-SoVITS'),
+        path.join(root, '..', 'local-tts', 'GPT-SoVITS'),
+        path.join(root, '..', 'models', 'local-tts', 'GPT-SoVITS'),
+      ]) ||
+      path.join(root, 'local-tts', 'GPT-SoVITS'),
   };
 }
 
