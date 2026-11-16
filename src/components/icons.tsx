@@ -131,6 +131,14 @@ const paths: Record<IconName, ReactNode> = {
   ),
   arrowUpRight: <path d="M7 17 17 7M8 7h9v9" />,
   pause: <path d="M9.5 5v14M14.5 5v14" />,
+  play: <path d="M8 5.5v13l10-6.5Z" />,
+  stop: <rect x="6.5" y="6.5" width="11" height="11" rx="1.6" />,
+  volume: (
+    <>
+      <path d="M4 9.5h3.2L12 5.8v12.4L7.2 14.5H4Z" />
+      <path d="M15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a7.6 7.6 0 0 1 0 11" />
+    </>
+  ),
   check: <path d="M20 6 9 17l-5-5" />,
   alert: (
     <>

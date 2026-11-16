@@ -273,6 +273,51 @@ export const defaultBrowserSites: WebSite[] = [
   ...defaultAiSites,
 ];
 
+/** 内置 Edge 神经音色：普通话、方言、台湾、粤语与多语种。 */
+export const BUILT_IN_VOICE_IDS = [
+  'xiaoxiao',
+  'xiaoyi',
+  'yunxi',
+  'yunjian',
+  'yunyang',
+  'yunxia',
+  'xiaobei',
+  'xiaoni',
+  'hsiaochen',
+  'hsiaoyu',
+  'yunjhe',
+  'hiugaai',
+  'hiumaan',
+  'wanlung',
+  'ava',
+  'andrew',
+] as const;
+export type BuiltInVoiceId = (typeof BUILT_IN_VOICE_IDS)[number];
+export type VoiceId = BuiltInVoiceId;
+/** Edge 在线音色，或本地 GPT-SoVITS 参考音频复刻。 */
+export type VoiceProvider = 'edge' | 'local';
+
+export interface VoiceLocalSettings {
+  /** GPT-SoVITS 根目录；留空时用程序同级的 local-tts/GPT-SoVITS。 */
+  root: string;
+  /** 参考音频绝对路径，只登记路径，不上传。 */
+  referenceAudio: string;
+  /** 参考音频里原话的逐字稿，必须与录音一致。 */
+  referenceText: string;
+}
+
+export interface VoiceSettings {
+  /** 当前会话收尾时自动朗读回复。 */
+  enabled: boolean;
+  provider: VoiceProvider;
+  voiceId: VoiceId;
+  /** 语速倍率，1 为原速。 */
+  rate: number;
+  /** 音量 0–100。 */
+  volume: number;
+  local: VoiceLocalSettings;
+}
+
 export interface WorkbenchSettings {
   appearance: {
     motion: boolean;
@@ -321,6 +366,7 @@ export interface WorkbenchSettings {
     /** 默认终端 shell 的 id：auto / git-bash / powershell / cmd，运行时再解析成实际路径。 */
     shell: string;
   };
+  voice: VoiceSettings;
 }
 
 export interface SettingsInput {
@@ -330,6 +376,7 @@ export interface SettingsInput {
   browser?: Partial<WorkbenchSettings['browser']>;
   engine?: Partial<WorkbenchSettings['engine']>;
   terminal?: Partial<WorkbenchSettings['terminal']>;
+  voice?: Partial<VoiceSettings>;
 }
 
 /**
@@ -369,6 +416,18 @@ export const defaultSettings: WorkbenchSettings = {
   },
   terminal: {
     shell: 'auto',
+  },
+  voice: {
+    enabled: true,
+    provider: 'edge',
+    voiceId: 'xiaoxiao',
+    rate: 1,
+    volume: 100,
+    local: {
+      root: '',
+      referenceAudio: '',
+      referenceText: '',
+    },
   },
 };
 
@@ -562,6 +621,36 @@ export function mergeSettings(input: SettingsInput | null | undefined): Workbenc
         typeof input?.terminal?.shell === 'string' && input.terminal.shell.trim()
           ? input.terminal.shell.trim()
           : defaultSettings.terminal.shell,
+    },
+    voice: normalizeVoiceSettings(input?.voice),
+  };
+}
+
+/** 语音配置只接受内置音色和有限范围，坏档退回默认值。 */
+export function normalizeVoiceSettings(input?: Partial<VoiceSettings> | null): VoiceSettings {
+  const rate = Number(input?.rate);
+  const volume = Number(input?.volume);
+  const legacy = (input as { gender?: string } | null | undefined)?.gender;
+  const builtIn = BUILT_IN_VOICE_IDS;
+  const requested = typeof input?.voiceId === 'string' ? input.voiceId.trim() : '';
+  const voiceId = builtIn.includes(requested as BuiltInVoiceId)
+    ? (requested as BuiltInVoiceId)
+    : legacy === 'male'
+      ? 'yunxi'
+      : 'xiaoxiao';
+  const local = (input?.local ?? {}) as Partial<VoiceLocalSettings>;
+  const text = (value: unknown, max: number) =>
+    typeof value === 'string' ? value.replace(/\r\n/g, '\n').trim().slice(0, max) : '';
+  return {
+    enabled: typeof input?.enabled === 'boolean' ? input.enabled : defaultSettings.voice.enabled,
+    provider: input?.provider === 'local' ? 'local' : 'edge',
+    voiceId,
+    rate: Number.isFinite(rate) ? Math.min(1.4, Math.max(0.8, Math.round(rate * 100) / 100)) : 1,
+    volume: Number.isFinite(volume) ? Math.min(100, Math.max(0, Math.round(volume))) : 100,
+    local: {
+      root: text(local.root, 400),
+      referenceAudio: text(local.referenceAudio, 400),
+      referenceText: text(local.referenceText, 600),
     },
   };
 }

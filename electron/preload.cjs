@@ -69,6 +69,11 @@ const api = {
   readEngineOrder: (root, day, orderId, agent) =>
     ipcRenderer.invoke('engine:order-doc', { root, day, orderId, agent }),
   copyText: (text) => ipcRenderer.invoke('clipboard:write', text),
+  ttsSpeak: (payload) => ipcRenderer.invoke('tts:speak', payload),
+  localTtsStatus: () => ipcRenderer.invoke('local-tts:status'),
+  localTtsStart: (root) => ipcRenderer.invoke('local-tts:start', { root }),
+  localTtsStop: () => ipcRenderer.invoke('local-tts:stop'),
+  localTtsOpenLog: () => ipcRenderer.invoke('local-tts:open-log'),
   terminalShells: () => ipcRenderer.invoke('terminal:shells'),
   terminalStart: (options) => ipcRenderer.invoke('terminal:start', options),
   terminalExec: (id, command) => ipcRenderer.invoke('terminal:exec', { id, command }),
@@ -94,15 +99,4 @@ const api = {
   platform: process.platform,
 };
 
-// 本地扩展：存在 electron/local/preload.cjs 时把它的桥接方法合并进来。
-let localApi = {};
-try {
-  localApi = require('./local/preload.cjs')(ipcRenderer) || {};
-} catch (error) {
-  const message = String((error && error.message) || error);
-  if (!/local[\/]preload\.cjs/.test(message)) {
-    console.warn('[local] preload unavailable', message);
-  }
-}
-
-contextBridge.exposeInMainWorld('desktop', { ...api, ...localApi });
+contextBridge.exposeInMainWorld('desktop', api);

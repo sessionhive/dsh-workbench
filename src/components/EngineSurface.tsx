@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { BootConfig } from '../bootConfig';
 import { setEngineActivity } from '../engineActivity';
+import { ingestEngineReply } from '../voice';
 import type { EngineProcessInfo } from '../engine/types';
 import type { HarnessBinding } from '../types';
 import { EngineBoot } from './EngineBoot';
@@ -186,6 +187,46 @@ type ActivityProbeResult = {
 };
 
 /**
+ * 读取当前会话最后一条回复。
+ * 官方页面给每个对话流节点打了稳定的 data-chat-* 标记：
+ * assistant-step + group-part="response" 是本轮回复正文，turn-tail 表示本轮结束。
+ * 只读页面里已经渲染的文字，不碰引擎文件；取不到就静默跳过。
+ */
+const REPLY_PROBE = `(() => {
+  const selected = document.querySelector('[role="treeitem"][class*="selected"]');
+  if (!selected) return null;
+  const sessionId = String(selected.getAttribute('data-row-key') || '').replace(/^session:/, '');
+  if (!sessionId) return null;
+  const responses = [...document.querySelectorAll(
+    '[data-chat-flow-kind="assistant-step"][data-chat-group-part="response"]',
+  )];
+  const last = responses[responses.length - 1];
+  if (!last) return null;
+  const turn = String(last.getAttribute('data-chat-turn') || '');
+  const tail = [...document.querySelectorAll('[data-chat-flow-kind="turn-tail"]')].some(
+    (node) => node.getAttribute('data-chat-turn') === turn,
+  );
+  const busy = [...document.querySelectorAll('button')].some((button) =>
+    /停止生成|停止|中断|正在发送/.test(button.getAttribute('aria-label') || ''),
+  );
+  const body = last.querySelector('[data-text-interaction-source]');
+  if (!body) return { sessionId, turn, done: tail || !busy, text: '' };
+  const clone = body.cloneNode(true);
+  clone
+    .querySelectorAll(
+      'pre, table, button, svg, style, script, img, video, audio, canvas, [aria-hidden="true"]',
+    )
+    .forEach((node) => node.remove());
+  const text = String(clone.innerText || '')
+    .replace(/\\u00a0/g, ' ')
+    .replace(/[ \\t]+\\n/g, '\\n')
+    .replace(/\\n{3,}/g, '\\n\\n')
+    .trim()
+    .slice(0, 24000);
+  return { sessionId, turn, done: tail || !busy, text };
+})()`;
+
+/**
  * 官方 Harness 页面常驻层。
  * 全局只挂一个 webview：用 requestAnimationFrame 跟随宿主盒子的位置与尺寸，
  * 宿主不存在时只隐藏、不卸载，因此切换会话或模式都不会重载线程页面。
@@ -339,6 +380,43 @@ export function EngineSurface({ target, info, harness, boot, onRestart }: Engine
       window.clearTimeout(timer);
     };
   }, [phase, target, url]);
+
+  // 语音播报用的回复探针：比运行态慢一档，避免频繁触发页面排版。
+  useEffect(() => {
+    if (phase !== 'ready' || !url) return;
+
+    let disposed = false;
+    let timer = 0;
+
+    const run = async () => {
+      if (disposed) return;
+      const view = webviewRef.current;
+      if (view?.executeJavaScript) {
+        try {
+          const result = (await view.executeJavaScript(REPLY_PROBE, true)) as
+            | { sessionId?: string; turn?: string; done?: boolean; text?: string }
+            | null;
+          if (!disposed && result && typeof result === 'object') {
+            ingestEngineReply({
+              sessionId: String(result.sessionId || ''),
+              turn: String(result.turn || ''),
+              done: Boolean(result.done),
+              text: typeof result.text === 'string' ? result.text : '',
+            });
+          }
+        } catch {
+          // 页面切换瞬间执行上下文会失效，下一轮再试。
+        }
+      }
+      if (!disposed) timer = window.setTimeout(run, 1500);
+    };
+
+    timer = window.setTimeout(run, 900);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [phase, url]);
 
   useEffect(() => {
     const root = rootRef.current;

@@ -11,6 +11,7 @@ const {
   session,
   protocol,
   net,
+  safeStorage,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -20,6 +21,8 @@ const { pathToFileURL } = require('url');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
 const { createEngineManager } = require('./engine-manager.cjs');
+const { createTtsService } = require('./tts.cjs');
+const { createLocalTtsManager } = require('./local-tts.cjs');
 
 // 本地扩展：存在 electron/local/runtime.cjs 时启用，公共仓库不包含该文件。
 let localRuntime = null;
@@ -125,6 +128,8 @@ function defaultPaths() {
       linux && app.isPackaged
         ? path.join(app.getPath('userData'), 'tools')
         : path.join(root, 'tools'),
+    // 本地语音模型放在程序同级目录，方便整体搬走；安装后不随仓库分发。
+    localTtsRoot: path.join(root, 'local-tts', 'GPT-SoVITS'),
   };
 }
 
@@ -1930,20 +1935,33 @@ ipcMain.handle('path:pick-directory', async (_event, payload) => {
   return result.canceled ? null : result.filePaths[0];
 });
 
-/** 背景素材只看扩展名，不读内容；选择结果交给 workbench-media 协议按需读取。 */
+/** 背景素材与参考音频只看扩展名，不读内容；背景交给 workbench-media 协议按需读取。 */
 ipcMain.handle('path:pick-file', async (_event, payload) => {
-  const video = payload && payload.kind === 'video';
-  const extensions = video
-    ? ['mp4', 'm4v', 'webm', 'mov', 'ogv']
-    : ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'];
+  const kind =
+    payload && payload.kind === 'video'
+      ? 'video'
+      : payload && payload.kind === 'audio'
+        ? 'audio'
+        : 'image';
+  const extensions =
+    kind === 'video'
+      ? ['mp4', 'm4v', 'webm', 'mov', 'ogv']
+      : kind === 'audio'
+        ? ['wav', 'mp3', 'm4a', 'flac', 'ogg', 'aac']
+        : ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'];
+  const label = kind === 'video' ? '背景视频' : kind === 'audio' ? '参考音频' : '背景图片';
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: (payload && payload.title) || (video ? '选择背景视频' : '选择背景图片'),
+    title: (payload && payload.title) || `选择${label}`,
     defaultPath: (payload && payload.defaultPath) || undefined,
     properties: ['openFile'],
-    filters: [{ name: video ? '视频' : '图片', extensions }],
+    filters: [{ name: label, extensions }],
   });
   if (result.canceled || !result.filePaths[0]) return null;
   const target = path.resolve(result.filePaths[0]);
+  if (kind === 'audio') {
+    if (!extensions.includes(path.extname(target).slice(1).toLowerCase())) return null;
+    return { path: target, kind: 'audio' };
+  }
   const mime = MEDIA_MIME[path.extname(target).toLowerCase()];
   if (!mime) return null;
   return { path: target, kind: mime.startsWith('video/') ? 'video' : 'image' };
@@ -2224,6 +2242,84 @@ ipcMain.handle('clipboard:write', (_event, text) => {
   }
 });
 
+// 语音播报：合成在本机主进程完成，渲染层只负责排队与播放。
+let ttsService = null;
+let localTtsManager = null;
+
+function voiceFailure(error) {
+  return {
+    ok: false,
+    error: String((error && error.message) || error).replace(/\s+/g, ' ').slice(0, 240),
+  };
+}
+
+function getLocalTtsManager() {
+  if (!localTtsManager) {
+    localTtsManager = createLocalTtsManager({
+      logDir: path.join(app.getPath('userData'), 'local-tts'),
+    });
+  }
+  return localTtsManager;
+}
+
+ipcMain.handle('tts:speak', async (_event, payload) => {
+  try {
+    if (!ttsService) {
+      ttsService = createTtsService({
+        cacheDir: path.join(app.getPath('userData'), 'tts-cache'),
+        localTts: getLocalTtsManager(),
+      });
+    }
+    const request = payload || {};
+    // 设置页留空时按默认安装目录走，避免「没有设置本地语音目录」。
+    if (request.provider === 'local' && request.local && !String(request.local.root || '').trim()) {
+      request.local = { ...request.local, root: defaultPaths().localTtsRoot };
+    }
+    const result = await ttsService.synthesize(request);
+    return { ok: true, audio: result.audio, cached: result.cached, mime: result.mime };
+  } catch (error) {
+    return voiceFailure(error);
+  }
+});
+
+ipcMain.handle('local-tts:status', () => {
+  try {
+    return getLocalTtsManager().status();
+  } catch (error) {
+    return { state: 'error', detail: String(error.message || error), port: 9880, root: '' };
+  }
+});
+
+ipcMain.handle('local-tts:start', async (_event, payload) => {
+  const manager = getLocalTtsManager();
+  const root = String((payload && payload.root) || '').trim() || defaultPaths().localTtsRoot;
+  try {
+    const status = await manager.ensure(root);
+    return { ok: true, ...status };
+  } catch (error) {
+    return { ok: false, error: String(error.message || error), ...manager.status() };
+  }
+});
+
+ipcMain.handle('local-tts:stop', async () => {
+  try {
+    const manager = getLocalTtsManager();
+    return { ok: true, ...(await manager.stop('manual')) };
+  } catch (error) {
+    return voiceFailure(error);
+  }
+});
+
+ipcMain.handle('local-tts:open-log', async () => {
+  const file = path.join(app.getPath('userData'), 'local-tts', 'local-tts.log');
+  try {
+    const error = await shell.openPath(file);
+    return error ? { ok: false, error } : { ok: true };
+  } catch (error) {
+    return voiceFailure(error);
+  }
+});
+
 ipcMain.handle('app:version', () => app.getVersion());
 
 ipcMain.handle('shell:open-external', async (_event, url) => {
@@ -2253,6 +2349,9 @@ if (!captureMode && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   if (!captureMode) app.on('second-instance', () => showMainWindow());
+
+  // 自动朗读由页面轮询触发，没有用户手势，需要放开 Chromium 的自动播放限制。
+  app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
   app.whenReady().then(() => {
     app.setAppUserModelId('com.dsh.nexus-workbench');
@@ -2300,6 +2399,7 @@ if (!captureMode && !app.requestSingleInstanceLock()) {
     isQuitting = true;
     killAllTerminals();
     engineManager?.quit();
+    localTtsManager?.quit();
     localRuntime?.shutdown?.();
   });
 

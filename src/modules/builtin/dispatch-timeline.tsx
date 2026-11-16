@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type {
   DispatchEventEntry,
   DispatchFeedResult,
@@ -23,6 +24,9 @@ const POLL_MS = 5000;
 const HIDDEN_POLL_MS = 15000;
 /** 超时角标每 30 秒刷新一次，避免一直等到下一次派单轮询。 */
 const OVERDUE_TICK_MS = 30000;
+/** TZ 已读只存在本机，按「日期/单号」记；单号每天重置也不会串。 */
+const NOTIFY_READ_KEY = 'dsh-workbench.dispatch-notify-read.v1';
+const NOTIFY_READ_LIMIT = 400;
 /** 插件接口尚未下发 thresholds 时的兜底值，与流程规范保持一致。 */
 const FALLBACK_THRESHOLDS: Required<DispatchThresholds> = {
   staleMinutes: 3,
@@ -52,6 +56,7 @@ const EVENT_LABEL: Record<string, string> = {
   submit: '提交',
   handoff: '交接',
   verify: '验收',
+  receipt: '回执',
   reject: '打回',
   close: '关单',
   cancel: '取消',
@@ -180,6 +185,49 @@ function notifyTypeLabel(type: string): string {
       return '手动';
     default:
       return type || '通知';
+  }
+}
+
+/** TZ 通知没有单独的 day 字段，按发送时间落日期分组。 */
+function stampOfNotify(item: NotifyItem): number {
+  const raw = item.sentAt || item.createdAt || '';
+  if (!raw) return 0;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function dayOfStamp(stamp: number): string {
+  const value = new Date(stamp);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(
+    value.getDate(),
+  ).padStart(2, '0')}`;
+}
+
+function notifyStatusLabel(status: string): string {
+  switch (status) {
+    case 'expired':
+      return '已过期';
+    case 'cancelled':
+      return '已取消';
+    default:
+      return '';
+  }
+}
+
+function notifyKeyOf(item: NotifyItem): string {
+  const stamp = stampOfNotify(item);
+  return `${stamp ? dayOfStamp(stamp) : 'unknown'}/${item.id}`;
+}
+
+function loadNotifyRead(): Set<string> {
+  try {
+    const raw = localStorage.getItem(NOTIFY_READ_KEY);
+    const list = raw ? (JSON.parse(raw) as unknown) : [];
+    return new Set(
+      Array.isArray(list) ? list.filter((key): key is string => typeof key === 'string') : [],
+    );
+  } catch {
+    return new Set();
   }
 }
 
@@ -479,14 +527,14 @@ function timingOf(order: DispatchOrder): DispatchTiming {
   return timing.durations ? { ...timing, ...timing.durations } : timing;
 }
 
-/** 派单记录：按天隔离、按 stage 分栏，flow 链路 + 超时角标 + 只读详情。 */
+/** 派单记录：PD 派单有回执/流程，TZ 通知只发不回执；按天隔离、按 stage 分栏。 */
 export const dispatchTimelineModule: ModuleDefinition = {
   manifest: {
     id: 'dispatch.timeline',
     name: '派单记录',
     version: '0.2.0',
     description:
-      '按日期 + 单号展示插件派单：按 stage 分进行中 / 已完成，flow 链路高亮当前棒次，超时只催不替，详情含事件时间线、耗时与单据文件，只读。',
+      '按日期展示 PD 派单（有受理回执、接力流程、验收与超时催办）与 TZ 通知（只发不回执），只读。',
     icon: 'activity',
     kind: ['view'],
     slots: ['center.view'],
@@ -503,6 +551,9 @@ export const dispatchTimelineModule: ModuleDefinition = {
     const [loading, setLoading] = useState(true);
     const [notifyFeed, setNotifyFeed] = useState<NotifyFeedResult | null>(null);
     const [notifyOpen, setNotifyOpen] = useState(false);
+    const [notifyPos, setNotifyPos] = useState<{ top: number; right: number } | null>(null);
+    const [notifyRead, setNotifyRead] = useState<Set<string>>(() => loadNotifyRead());
+    const notifyBtnRef = useRef<HTMLButtonElement | null>(null);
     const [now, setNow] = useState(() => Date.now());
     const [reload, setReload] = useState(0);
     const [older, setOlder] = useState<{
@@ -634,6 +685,45 @@ export const dispatchTimelineModule: ModuleDefinition = {
       return () => window.clearInterval(timer);
     }, []);
 
+    // TZ 通知浮层跟着按钮定位；窗口尺寸变化时直接收起，避免浮层悬空。
+    useEffect(() => {
+      if (!notifyOpen) return;
+      const close = () => setNotifyOpen(false);
+      const onKey = (event: KeyboardEvent) => {
+        if (event.key === 'Escape') close();
+      };
+      window.addEventListener('resize', close);
+      document.addEventListener('keydown', onKey);
+      return () => {
+        window.removeEventListener('resize', close);
+        document.removeEventListener('keydown', onKey);
+      };
+    }, [notifyOpen]);
+
+    // 已读标记只落在本机存储，重开工作台后仍然保持已读。
+    useEffect(() => {
+      try {
+        const list = [...notifyRead].slice(-NOTIFY_READ_LIMIT);
+        localStorage.setItem(NOTIFY_READ_KEY, JSON.stringify(list));
+      } catch {
+        // 存储不可用时只影响本次会话，不打断派单面板
+      }
+    }, [notifyRead]);
+
+    const toggleNotify = () => {
+      if (notifyOpen) {
+        setNotifyOpen(false);
+        return;
+      }
+      const rect = notifyBtnRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setNotifyPos({
+        top: Math.round(rect.bottom + 8),
+        right: Math.max(12, Math.round(window.innerWidth - rect.right)),
+      });
+      setNotifyOpen(true);
+    };
+
     const labelFor = (raw: string) => {
       const trimmed = String(raw || '').trim();
       if (!trimmed) return '未知';
@@ -678,15 +768,32 @@ export const dispatchTimelineModule: ModuleDefinition = {
     const activeChains = useMemo(
       () =>
         chains.filter(
-          (chain) => !chain.cancelled && chain.stage !== 'closed' && !chain.order.done,
+          (chain) =>
+            !chain.cancelled &&
+            !chain.order.done &&
+            chain.stage !== 'closed' &&
+            chain.stage !== 'verified' &&
+            chain.stage !== 'submitted',
         ),
       [chains],
     );
+    const pendingChains = useMemo(
+      () => chains.filter((chain) => !chain.cancelled && !chain.order.done && chain.stage === 'submitted'),
+      [chains],
+    );
     const doneChains = useMemo(
-      () => chains.filter((chain) => chain.cancelled || chain.stage === 'closed' || chain.order.done),
+      () =>
+        chains.filter(
+          (chain) =>
+            chain.cancelled ||
+            chain.order.done ||
+            chain.stage === 'closed' ||
+            chain.stage === 'verified',
+        ),
       [chains],
     );
     const activeGroups = useMemo(() => groupByDay(activeChains), [activeChains]);
+    const pendingGroups = useMemo(() => groupByDay(pendingChains), [pendingChains]);
     const doneGroups = useMemo(() => groupByDay(doneChains), [doneChains]);
 
     const toggleActiveDate = (day: string) =>
@@ -833,6 +940,9 @@ export const dispatchTimelineModule: ModuleDefinition = {
           {chain.task && <p className="dispatch-task">{chain.task}</p>}
           <div className="dispatch-detail-meta">
             <span>
+              类型 <b>PD 派单 · 有回执</b>
+            </span>
+            <span>
               完整单号 <b>{chain.key}</b>
             </span>
             <span>
@@ -975,8 +1085,40 @@ export const dispatchTimelineModule: ModuleDefinition = {
       );
     };
 
-    const notifyItems: NotifyItem[] = Array.isArray(notifyFeed?.items) ? notifyFeed.items.slice(0, 20) : [];
-    const notifyUnread = Number(notifyFeed?.unread) || 0;
+    // 已读的 TZ 不再出现：角标、列表都只算未读。
+    const notifyUnread = useMemo(
+      () =>
+        (Array.isArray(notifyFeed?.items) ? notifyFeed.items : []).filter(
+          (item) => Boolean(item && item.id) && !notifyRead.has(notifyKeyOf(item)),
+        ),
+      [notifyFeed, notifyRead],
+    );
+    const notifyCount = notifyUnread.length;
+    /** 通知按天分组展示：TZ 号每天重置，只有日期能区分批次。 */
+    const notifyGroups = useMemo(() => {
+      const items = [...notifyUnread]
+        .sort((left, right) => stampOfNotify(right) - stampOfNotify(left))
+        .slice(0, 30);
+      const map = new Map<string, NotifyItem[]>();
+      for (const item of items) {
+        const stamp = stampOfNotify(item);
+        const key = stamp ? dayOfStamp(stamp) : 'unknown';
+        const list = map.get(key) ?? [];
+        list.push(item);
+        map.set(key, list);
+      }
+      return [...map.entries()];
+    }, [notifyUnread]);
+
+    const markAllNotifyRead = () => {
+      const items = Array.isArray(notifyFeed?.items) ? notifyFeed.items : [];
+      if (!items.length) return;
+      setNotifyRead((previous) => {
+        const next = new Set(previous);
+        for (const item of items) if (item?.id) next.add(notifyKeyOf(item));
+        return next;
+      });
+    };
     const live = Boolean(feed?.ok) && chains.length > 0;
     const failedDays = (feed?.days ?? []).filter((entry) => !entry.ok);
     const feedError = feed?.error || failedDays[0]?.error;
@@ -986,17 +1128,17 @@ export const dispatchTimelineModule: ModuleDefinition = {
       <div className="dispatch-panel">
         <div className="dispatch-head">
           <div className="dispatch-head-main">
-            <span className="dispatch-title">
+            <span className="dispatch-title" title="PD 派单 · 有受理回执与接力流程">
               <Icon name="activity" size={12} />
-              派单链路
+              PD 派单
             </span>
             <span
               className="dispatch-meta"
-              title={`插件按未受理 ${thresholds.staleMinutes} 分钟 / 未提交 ${thresholds.noticeMinutes} 分钟检测超时；notice.enabled 关闭时只记录心跳，不唤醒`}
+              title={`PD 派单按未受理 ${thresholds.staleMinutes} 分钟 / 未提交 ${thresholds.noticeMinutes} 分钟检测超时；TZ 通知只发不回执`}
             >
               {loading && chains.length === 0
                 ? '正在读取…'
-                : `${activeChains.length} 进行中 · ${doneChains.length} 已完成 · 只读`}
+                : `${activeChains.length} 进行中 · ${doneChains.length} 已完成`}
               {live && <i className="dispatch-live" title="正在跟随插件派单接口" />}
               {feedError && chains.length > 0 && (
                 <span className="dispatch-meta-warn" title={feedError}>
@@ -1007,13 +1149,19 @@ export const dispatchTimelineModule: ModuleDefinition = {
           </div>
           <div className="dispatch-actions">
             <button
+              ref={notifyBtnRef}
               type="button"
               className={notifyOpen ? 'icon-btn active' : 'icon-btn'}
-              title={notifyUnread > 0 ? `通知（只读）· ${notifyUnread} 条未处理` : '通知（只读）'}
-              onClick={() => setNotifyOpen((value) => !value)}
+              aria-expanded={notifyOpen}
+              title={
+                notifyCount > 0
+                  ? `通知 · ${notifyCount} 条未读 · 只发不回执`
+                  : '通知 · 没有未读 · 只发不回执'
+              }
+              onClick={toggleNotify}
             >
               <Icon name="mail" size={12} />
-              {notifyUnread > 0 && <span className="dispatch-notify-badge">{notifyUnread > 99 ? '99+' : notifyUnread}</span>}
+              {notifyCount > 0 && <span className="dispatch-notify-badge">{notifyCount > 99 ? '99+' : notifyCount}</span>}
             </button>
             <button
               type="button"
@@ -1031,151 +1179,242 @@ export const dispatchTimelineModule: ModuleDefinition = {
           </div>
         </div>
 
-        {notifyOpen && (
-          <div className="dispatch-notify-panel">
-            <div className="dispatch-notify-head">
-              <span>通知</span>
-              <span className="dispatch-notify-hint">只读 · 由插件生成（TZ 号）· 无需 ack</span>
+        <div className="dispatch-body">
+          {chains.length === 0 ? (
+            <div className="dispatch-empty">
+              <Icon name="activity" size={20} />
+              <p>
+                {loading
+                  ? '正在读取派单接口…'
+                  : allFailed
+                    ? `派单接口不可用${feedError ? `：${feedError}` : ''}。引擎启动后会自动恢复。`
+                    : '今天和昨天还没有派单记录。插件产生 dispatch 后会出现在这里。'}
+              </p>
+              {!loading && !allFailed && older === null && (
+                <button
+                  type="button"
+                  className="dispatch-history"
+                  onClick={() => {
+                    setOlder({ loading: true, orders: [] });
+                    setHistoryReload((value) => value + 1);
+                  }}
+                >
+                  <Icon name="clock" size={11} />
+                  加载更早记录（最近 7 天）
+                </button>
+              )}
             </div>
-            {notifyItems.length === 0 ? (
-              <div className="dispatch-notify-empty">
-                {notifyFeed?.error ? `通知接口不可用：${notifyFeed.error}` : '今天和昨天还没有通知。'}
-              </div>
-            ) : (
-              <ul className="dispatch-notify-list">
-                {notifyItems.map((item) => (
-                  <li key={item.id} className={item.status === 'sent' ? 'dispatch-notify-item unread' : 'dispatch-notify-item'}>
-                    <span className="dispatch-notify-id">{item.id}</span>
-                    <span className={`dispatch-notify-type t-${item.type || 'other'}`}>{notifyTypeLabel(String(item.type || ''))}</span>
-                    {item.order && <span className="dispatch-notify-order">#{item.order}</span>}
-                    <span className="dispatch-notify-content" title={item.content}>
-                      {item.content || '（无内容）'}
-                    </span>
-                    <span className="dispatch-notify-to">{item.to || '—'}</span>
-                    <span className="dispatch-notify-time">{String(item.sentAt || item.createdAt || '').slice(5, 16).replace('T', ' ')}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
+          ) : (
+            <div className="dispatch-columns">
+              <section className="dispatch-col">
+                <div className="dispatch-col-head static">
+                  <span className="dispatch-col-title">进行中</span>
+                  <em>{activeChains.length}</em>
+                  <span className="dispatch-col-hint">按天 · 默认展开</span>
+                </div>
+                <div className="dispatch-col-body">
+                  {activeGroups.map(([day, items]) => {
+                    const open = !closedActiveDates.has(day);
+                    return (
+                      <div key={day} className="dispatch-date-group">
+                        <button
+                          type="button"
+                          className={`dispatch-date${open ? ' open' : ''}`}
+                          onClick={() => toggleActiveDate(day)}
+                          title={day}
+                        >
+                          <Icon name={open ? 'chevronDown' : 'chevronRight'} size={11} />
+                          <span>{dayLabel(day)}</span>
+                          <em>{items.length} 条</em>
+                        </button>
+                        {open && items.map(renderChain)}
+                      </div>
+                    );
+                  })}
+                  {activeChains.length === 0 && (
+                    <div className="dispatch-col-empty">暂无进行中的派单</div>
+                  )}
+                </div>
+              </section>
 
-        {chains.length === 0 ? (
-          <div className="dispatch-empty">
-            <Icon name="activity" size={20} />
-            <p>
-              {loading
-                ? '正在读取派单接口…'
-                : allFailed
-                  ? `派单接口不可用${feedError ? `：${feedError}` : ''}。引擎启动后会自动恢复。`
-                  : '今天和昨天还没有派单记录。插件产生 dispatch 后会出现在这里。'}
-            </p>
-            {!loading && !allFailed && older === null && (
-              <button
-                type="button"
-                className="dispatch-history"
-                onClick={() => {
-                  setOlder({ loading: true, orders: [] });
-                  setHistoryReload((value) => value + 1);
-                }}
-              >
-                <Icon name="clock" size={11} />
-                加载更早记录（最近 7 天）
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="dispatch-columns">
-            <section className="dispatch-col">
-              <div className="dispatch-col-head static">
-                <span className="dispatch-col-title">进行中</span>
-                <em>{activeChains.length}</em>
-                <span className="dispatch-col-hint">按天 · 默认展开</span>
-              </div>
-              <div className="dispatch-col-body">
-                {activeGroups.map(([day, items]) => {
-                  const open = !closedActiveDates.has(day);
-                  return (
+              <section className="dispatch-col">
+                <div className="dispatch-col-head static">
+                  <span className="dispatch-col-title">待验收</span>
+                  <em>{pendingChains.length}</em>
+                  <span className="dispatch-col-hint">已提交 · 等主负责人验收</span>
+                </div>
+                <div className="dispatch-col-body">
+                  {pendingGroups.map(([day, items]) => (
                     <div key={day} className="dispatch-date-group">
-                      <button
-                        type="button"
-                        className={`dispatch-date${open ? ' open' : ''}`}
-                        onClick={() => toggleActiveDate(day)}
-                        title={day}
-                      >
-                        <Icon name={open ? 'chevronDown' : 'chevronRight'} size={11} />
+                      <div className="dispatch-date open" title={day}>
                         <span>{dayLabel(day)}</span>
                         <em>{items.length} 条</em>
-                      </button>
-                      {open && items.map(renderChain)}
+                      </div>
+                      {items.map(renderChain)}
                     </div>
-                  );
-                })}
-                {activeChains.length === 0 && (
-                  <div className="dispatch-col-empty">暂无进行中的派单</div>
-                )}
-              </div>
-            </section>
+                  ))}
+                  {pendingChains.length === 0 && (
+                    <div className="dispatch-col-empty">暂无待验收的派单</div>
+                  )}
+                </div>
+              </section>
 
-            <section className="dispatch-col">
-              <div className="dispatch-col-head static">
-                <span className="dispatch-col-title">已完成</span>
-                <em>{doneChains.length}</em>
-                <span className="dispatch-col-hint">按天 · 默认折叠</span>
-              </div>
-              <div className="dispatch-col-body">
-                {doneGroups.map(([day, items]) => {
-                  const open = openDates.has(day);
-                  return (
-                    <div key={day} className="dispatch-date-group">
-                      <button
-                        type="button"
-                        className={`dispatch-date${open ? ' open' : ''}`}
-                        onClick={() => toggleDoneDate(day)}
-                        title={day}
-                      >
-                        <Icon name={open ? 'chevronDown' : 'chevronRight'} size={11} />
-                        <span>{dayLabel(day)}</span>
-                        <em>{items.length} 条</em>
-                      </button>
-                      {open && items.map(renderChain)}
-                    </div>
-                  );
-                })}
-                {doneChains.length === 0 && (
-                  <div className="dispatch-col-empty">还没有已完成的派单</div>
-                )}
-                {older === null && (
-                  <button
-                    type="button"
-                    className="dispatch-history"
-                    onClick={() => {
-                      setOlder({ loading: true, orders: [] });
-                      setHistoryReload((value) => value + 1);
-                    }}
-                  >
-                    <Icon name="clock" size={11} />
-                    加载更早记录（最近 7 天）
-                  </button>
-                )}
-                {older?.loading && (
-                  <div className="dispatch-col-empty">正在读取更早记录…</div>
-                )}
-                {older && !older.loading && older.error && (
-                  <button
-                    type="button"
-                    className="dispatch-history"
-                    title={older.error}
-                    onClick={() => setHistoryReload((value) => value + 1)}
-                  >
-                    <Icon name="refresh" size={11} />
-                    更早记录读取失败，重试
-                  </button>
-                )}
-              </div>
-            </section>
-          </div>
-        )}
+              <section className="dispatch-col">
+                <div className="dispatch-col-head static">
+                  <span className="dispatch-col-title">已完成</span>
+                  <em>{doneChains.length}</em>
+                  <span className="dispatch-col-hint">按天 · 默认折叠</span>
+                </div>
+                <div className="dispatch-col-body">
+                  {doneGroups.map(([day, items]) => {
+                    const open = openDates.has(day);
+                    return (
+                      <div key={day} className="dispatch-date-group">
+                        <button
+                          type="button"
+                          className={`dispatch-date${open ? ' open' : ''}`}
+                          onClick={() => toggleDoneDate(day)}
+                          title={day}
+                        >
+                          <Icon name={open ? 'chevronDown' : 'chevronRight'} size={11} />
+                          <span>{dayLabel(day)}</span>
+                          <em>{items.length} 条</em>
+                        </button>
+                        {open && items.map(renderChain)}
+                      </div>
+                    );
+                  })}
+                  {doneChains.length === 0 && (
+                    <div className="dispatch-col-empty">还没有已完成的派单</div>
+                  )}
+                  {older === null && (
+                    <button
+                      type="button"
+                      className="dispatch-history"
+                      onClick={() => {
+                        setOlder({ loading: true, orders: [] });
+                        setHistoryReload((value) => value + 1);
+                      }}
+                    >
+                      <Icon name="clock" size={11} />
+                      加载更早记录（最近 7 天）
+                    </button>
+                  )}
+                  {older?.loading && (
+                    <div className="dispatch-col-empty">正在读取更早记录…</div>
+                  )}
+                  {older && !older.loading && older.error && (
+                    <button
+                      type="button"
+                      className="dispatch-history"
+                      title={older.error}
+                      onClick={() => setHistoryReload((value) => value + 1)}
+                    >
+                      <Icon name="refresh" size={11} />
+                      更早记录读取失败，重试
+                    </button>
+                  )}
+                </div>
+              </section>
+            </div>
+          )}
+
+          {notifyOpen &&
+            notifyPos &&
+            createPortal(
+              <>
+                <div
+                  className="dispatch-notify-scrim"
+                  onMouseDown={() => setNotifyOpen(false)}
+                />
+                <section
+                  className="dispatch-notify-pop"
+                  style={{ top: notifyPos.top, right: notifyPos.right }}
+                  aria-label="TZ 通知 · 只发不回执"
+                >
+                  <div className="dispatch-notify-pop-head">
+                    <span className="dispatch-notify-pop-title">通知</span>
+                  </div>
+                  <div className="dispatch-notify-scroll">
+                    {notifyGroups.length === 0 ? (
+                      <div className="dispatch-notify-empty">
+                        {notifyFeed?.error
+                          ? `通知接口不可用：${notifyFeed.error}`
+                          : '没有未读通知。'}
+                      </div>
+                    ) : (
+                      notifyGroups.map(([day, items]) => (
+                        <div key={day} className="dispatch-notify-group">
+                          <div className="dispatch-notify-day">
+                            <span>{day === 'unknown' ? '日期未知' : dayLabel(day)}</span>
+                            <em>{items.length} 条</em>
+                          </div>
+                          <ul className="dispatch-notify-list">
+                            {items.map((item) => {
+                              const stamp = stampOfNotify(item);
+                              const status = notifyStatusLabel(String(item.status || ''));
+                              const order = String(item.order || '');
+                              const showOrder =
+                                Boolean(order) && !String(item.content || '').includes(order);
+                              const hasMeta = Boolean(item.to) || showOrder || Boolean(status);
+                              return (
+                                <li key={item.id} className="dispatch-notify-item">
+                                  <div className="dispatch-notify-row">
+                                    <span className={`dispatch-notify-type t-${item.type || 'other'}`}>
+                                      <i />
+                                      {notifyTypeLabel(String(item.type || ''))}
+                                    </span>
+                                    <span className="dispatch-notify-id">{item.id}</span>
+                                    <span className="dispatch-notify-time">
+                                      {stamp ? clockOf(stamp) : '—'}
+                                    </span>
+                                  </div>
+                                  <p
+                                    className="dispatch-notify-content"
+                                    title={item.content || undefined}
+                                  >
+                                    {item.content || '（无内容）'}
+                                  </p>
+                                  {hasMeta && (
+                                    <div className="dispatch-notify-meta">
+                                      {showOrder && (
+                                        <span className="dispatch-notify-order">#{order}</span>
+                                      )}
+                                      {item.to && (
+                                        <span
+                                          className="dispatch-notify-to"
+                                          title={`接收方 ${item.to}`}
+                                        >
+                                          → {item.to}
+                                        </span>
+                                      )}
+                                      {status && <em className="dispatch-notify-status">{status}</em>}
+                                    </div>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="dispatch-notify-foot">
+                    <span>只发不回执 · {notifyCount} 条未读</span>
+                    <button
+                      type="button"
+                      className="dispatch-notify-readall"
+                      onClick={markAllNotifyRead}
+                      disabled={notifyCount === 0}
+                    >
+                      一键已读
+                    </button>
+                  </div>
+                </section>
+              </>,
+              document.body,
+            )}
+        </div>
       </div>
     );
   },

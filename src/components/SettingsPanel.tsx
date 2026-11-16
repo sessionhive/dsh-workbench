@@ -40,6 +40,7 @@ import type { TerminalShellOption } from '../terminal/types';
 import { Icon } from './icons';
 import { Markdown } from './Markdown';
 import { ThemeBackdrop } from './ThemeBackdrop';
+import { VoiceStudio } from './VoiceStudio';
 
 interface SettingsPanelProps {
   settings: WorkbenchSettings;
@@ -57,6 +58,7 @@ type TabId =
   | 'interface'
   | 'engine'
   | 'terminal'
+  | 'voice'
   | 'health'
   | 'skills'
   | 'tools'
@@ -68,6 +70,7 @@ const TABS: Array<{ id: TabId; label: string; eyebrow: string; icon: IconName }>
   { id: 'interface', label: '界面', eyebrow: 'INTERFACE', icon: 'monitor' },
   { id: 'engine', label: '引擎', eyebrow: 'ENGINE', icon: 'database' },
   { id: 'terminal', label: '终端', eyebrow: 'TERMINAL', icon: 'terminal' },
+  { id: 'voice', label: '语音', eyebrow: 'VOICE', icon: 'volume' },
   { id: 'health', label: '体检', eyebrow: 'HEALTH', icon: 'activity' },
   { id: 'skills', label: '技能', eyebrow: 'SKILLS', icon: 'book' },
   { id: 'tools', label: '工具', eyebrow: 'TOOLS', icon: 'wrench' },
@@ -324,6 +327,7 @@ export function SettingsPanel({
       browser: settings.browser,
       engine: { ...settings.engine, ...(next.engine ?? {}) },
       terminal: { ...settings.terminal, ...(next.terminal ?? {}) },
+      voice: { ...settings.voice, ...(next.voice ?? {}) },
     });
   };
 
@@ -744,12 +748,14 @@ export function SettingsPanel({
       kind === 'video' ? '选择背景视频' : '选择背景图片',
     );
     if (!picked) return;
+    if (picked.kind !== 'image' && picked.kind !== 'video') return;
+    const mediaKind = picked.kind;
     setDraft((current) =>
       current
         ? {
             ...current,
             media: {
-              kind: picked.kind,
+              kind: mediaKind,
               path: picked.path,
               dim: current.media?.dim ?? 52,
               blur: current.media?.blur ?? 0,
@@ -1988,6 +1994,44 @@ export function SettingsPanel({
                 <p className="settings-note">
                   终端盒子里的分栏比例会自动保存；修改默认 shell 后，新的终端盒子会按新选择启动，已经打开的盒子点右上角重启即可切换。
                 </p>
+              </section>
+            )}
+
+            {tab === 'voice' && (
+              <section className="settings-pane">
+                <div className="settings-pane-head">
+                  <div>
+                    <h4>引擎语音播报</h4>
+                    <p>
+                      用固定音色朗读当前会话的回复；本地复刻用参考音频，Edge 用预置音色。
+                      简报按段落整篇读完，代码和表格自动跳过。
+                    </p>
+                  </div>
+                  <span className="settings-badge">
+                    {settings.voice.enabled ? '自动朗读' : '已关闭'}
+                  </span>
+                </div>
+
+                <div className="settings-row">
+                  <div>
+                    <strong>自动朗读当前会话</strong>
+                    <p>
+                      只在官方页面里当前打开的会话收尾时朗读；后台会话不读，启动前就有的旧回复也不会补念。
+                    </p>
+                  </div>
+                  <Toggle
+                    checked={settings.voice.enabled}
+                    label="自动朗读当前会话"
+                    onChange={(value) =>
+                      patch({ voice: { ...settings.voice, enabled: value } })
+                    }
+                  />
+                </div>
+
+                <VoiceStudio
+                  voice={settings.voice}
+                  onChange={(next) => patch({ voice: next })}
+                />
               </section>
             )}
 

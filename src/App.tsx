@@ -21,6 +21,7 @@ import { useLongPressSort } from './hooks/useLongPressSort';
 import { useSystemStats } from './hooks/useSystemStats';
 import { normalizeModuleState, normalizeModules, resetModules } from './moduleDefaults';
 import { useEngineActivity } from './engineActivity';
+import { configureVoice } from './voice';
 import {
   emitWorkbenchEvent,
   getModuleDefinition,
@@ -311,6 +312,12 @@ export default function App() {
     if (!desktop?.setCloseToTray) return;
     void desktop.setCloseToTray(settings.workbench.closeToTray);
   }, [hydrated, settings.workbench.closeToTray]);
+
+  // 语音播报跟随设置；关掉开关会立即停止正在朗读的内容。
+  useEffect(() => {
+    if (!hydrated) return;
+    configureVoice(settings.voice);
+  }, [hydrated, settings.voice]);
 
   useEffect(() => {
     const desktop = window.desktop;

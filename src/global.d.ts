@@ -24,6 +24,14 @@ import type {
   TerminalStartResult,
 } from './terminal/types';
 
+export interface LocalTtsStatus {
+  state: 'stopped' | 'starting' | 'ready' | 'error';
+  detail: string;
+  port: number;
+  root: string;
+  owned?: boolean;
+}
+
 export {};
 
 declare global {
@@ -60,10 +68,13 @@ declare global {
       pickWorkspaceRoot: (defaultPath?: string) => Promise<string | null>;
       pickDirectory: (title: string, defaultPath: string) => Promise<string | null>;
       pickFile: (
-        kind: 'image' | 'video',
+        kind: 'image' | 'video' | 'audio',
         title?: string,
         defaultPath?: string,
-      ) => Promise<{ path: string; kind: 'image' | 'video' } | null>;
+      ) => Promise<{
+        path: string;
+        kind: 'image' | 'video' | 'audio';
+      } | null>;
       listDirectory: (root: string, relative: string) => Promise<FileListing>;
       resolvePath: (
         root: string,
@@ -107,6 +118,28 @@ declare global {
         agent: string,
       ) => Promise<EngineDocResult>;
       copyText: (text: string) => Promise<{ ok: boolean; error?: string }>;
+      ttsSpeak: (payload: {
+        text: string;
+        provider: 'edge' | 'local';
+        voiceId: string;
+        rate: number;
+        volume: number;
+        local?: {
+          root: string;
+          referenceAudio: string;
+          referenceText: string;
+        };
+      }) => Promise<{
+        ok: boolean;
+        audio?: Uint8Array;
+        cached?: boolean;
+        mime?: string;
+        error?: string;
+      }>;
+      localTtsStatus: () => Promise<LocalTtsStatus>;
+      localTtsStart: (root?: string) => Promise<LocalTtsStatus & { ok: boolean; error?: string }>;
+      localTtsStop: () => Promise<LocalTtsStatus & { ok: boolean; error?: string }>;
+      localTtsOpenLog: () => Promise<{ ok: boolean; error?: string }>;
       terminalShells: () => Promise<TerminalShellOption[]>;
       terminalStart: (options: TerminalStartOptions) => Promise<TerminalStartResult>;
       terminalExec: (

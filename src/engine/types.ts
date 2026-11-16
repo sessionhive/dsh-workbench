@@ -331,6 +331,8 @@ export interface PathDefaults {
   filesRoot: string;
   skillsPath: string;
   toolsPath: string;
+  /** 本地语音（GPT-SoVITS）根目录，默认在程序同级的 local-tts 下。 */
+  localTtsRoot: string;
 }
 
 export type HealthStatus = 'ok' | 'warn' | 'fail';

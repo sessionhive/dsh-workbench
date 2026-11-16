@@ -10,6 +10,14 @@ import {
 import type { CostSnapshot, EngineProcessInfo, EngineSnapshot } from '../engine/types';
 import type { SystemStats } from '../hooks/useSystemStats';
 import type { Session } from '../types';
+import { Icon } from './icons';
+import {
+  clearVoiceError,
+  speakLatestReply,
+  stopVoice,
+  toggleVoicePause,
+  useVoiceState,
+} from '../voice';
 
 interface StatusBarProps {
   sessions: Session[];
@@ -37,6 +45,7 @@ export function StatusBar({
 }: StatusBarProps) {
   const [now, setNow] = useState(() => new Date());
   const activity = useEngineActivity();
+  const voice = useVoiceState();
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -116,6 +125,56 @@ export function StatusBar({
         <span>
           未读 <b className="mono">{unread}</b>
         </span>
+        {voice.phase === 'idle' && voice.lastReply && (
+          <>
+            <span className="sep" />
+            <button
+              type="button"
+              className="status-voice idle"
+              title="朗读当前会话最新一轮回复"
+              onClick={speakLatestReply}
+            >
+              <Icon name="volume" size={12} />
+              朗读回复
+            </button>
+          </>
+        )}
+        {voice.phase === 'idle' && voice.error && (
+          <button
+            type="button"
+            className="status-voice error"
+            title={voice.error}
+            onClick={clearVoiceError}
+          >
+            <Icon name="alert" size={11} />
+            语音不可用
+          </button>
+        )}
+        {voice.phase !== 'idle' && (
+          <span className={`status-voice live ${voice.phase}`}>
+            <button
+              type="button"
+              title={voice.phase === 'paused' ? '继续朗读' : '暂停朗读'}
+              onClick={toggleVoicePause}
+            >
+              <Icon name={voice.phase === 'paused' ? 'play' : 'pause'} size={11} />
+            </button>
+            <span className="status-voice-label">
+              {voice.phase === 'loading'
+                ? voice.local
+                  ? voice.index
+                    ? `本地合成 ${voice.index}/${voice.total}`
+                    : '本地合成中'
+                  : '准备语音'
+                : voice.phase === 'paused'
+                  ? '已暂停'
+                  : `朗读中 ${voice.index}/${voice.total}`}
+            </span>
+            <button type="button" title="停止朗读" onClick={stopVoice}>
+              <Icon name="stop" size={10} />
+            </button>
+          </span>
+        )}
       </div>
       <div className="spacer" />
       <div className="group status-right">
