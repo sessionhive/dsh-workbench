@@ -96,22 +96,26 @@ function defaultPaths() {
   const engineDir =
     process.env.DSH_ENGINE_DIR ||
     firstExistingDir([
+      // 推荐布局：<root>/engines；同时兼容旧的单数目录和用户目录安装。
+      path.join(root, 'engines'),
       path.join(root, 'engine'),
       path.join(home, 'DSH', 'engine'),
       path.join(home, 'dsh', 'engine'),
       path.join(home, '.local', 'share', 'dsh', 'engine'),
     ]) ||
-    path.join(root, 'engine');
+    path.join(root, 'engines');
   const dataPath =
     process.env.DSH_HOME ||
     firstExistingDir([
+      // 推荐布局：<root>/data/.dsh；data/dev/.dsh 与 engine-data 是旧布局。
+      path.join(root, 'data', '.dsh'),
       path.join(root, 'data', 'dev', '.dsh'),
       path.join(root, 'engine-data', '.dsh'),
       path.join(home, '.dsh'),
       path.join(home, '.config', 'dsh'),
       path.join(home, '.local', 'share', 'dsh'),
     ]) ||
-    (linux && app.isPackaged ? path.join(home, '.dsh') : path.join(root, 'data', 'dev', '.dsh'));
+    (linux && app.isPackaged ? path.join(home, '.dsh') : path.join(root, 'data', '.dsh'));
   const workspacePath = sourceLayout
     ? path.join(root, 'workspace')
     : linux
@@ -128,7 +132,8 @@ function defaultPaths() {
     toolsPath:
       linux && app.isPackaged
         ? path.join(app.getPath('userData'), 'tools')
-        : path.join(root, 'tools'),
+        : firstExistingDir([path.join(root, '_dev', 'tools'), path.join(root, 'tools')]) ||
+          path.join(root, '_dev', 'tools'),
     // 本地语音模型放在程序同级目录，方便整体搬走；安装后不随仓库分发。
     // 目录重排后 root 会变成 Workbench\app，模型可能在上层的 models\local-tts，
     // 所以按「环境变量 → 同级 → 上级 → 上级 models」的顺序探测，取第一个存在的。
@@ -1313,6 +1318,27 @@ function statOf(target) {
   }
 }
 
+/** 只验证目录能否列出一级条目，用来区分「不存在」和「没有读取权限」。 */
+function canReadDir(target) {
+  try {
+    fs.readdirSync(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 读取 JSON 只回报结构和大小，不把内容带出主进程。 */
+function jsonFileStatus(target) {
+  const stat = statOf(target);
+  if (!stat.file) return { ...stat, valid: false, data: null };
+  try {
+    return { ...stat, valid: true, data: JSON.parse(fs.readFileSync(target, 'utf8')) };
+  } catch {
+    return { ...stat, valid: false, data: null };
+  }
+}
+
 function countEntries(target) {
   try {
     return fs.readdirSync(target, { withFileTypes: true }).length;
@@ -1322,7 +1348,9 @@ function countEntries(target) {
 }
 
 /**
- * 体检只看白名单内的文件是否存在、目录里有多少条目，以及已有的只读扫描结果，
+ * 体检按「环境 → 工作台 → 路径 → 工具 → 引擎 → 核心插件」串成一条链路，
+ * 同一环节的细节合并成一行，避免把安装步骤拆得太碎。
+ * 本地语音 / GPT-SoVITS 属于个人部署，不进入体检；这里只读白名单内的文件与目录，
  * 不读取凭据，也不打开插件源码。
  */
 function runHealthCheck(engineSettings) {
@@ -1332,58 +1360,118 @@ function runHealthCheck(engineSettings) {
     checks.push({ id: `${group}:${label}`, group, label, status, detail, hint: hint || '' });
 
   const proc = engineManager ? engineManager.status() : idleEngineStatus();
+  const nodeMajor = Number(String(process.versions.node).split('.')[0]) || 0;
 
   add(
     '环境',
     '桌面运行时',
-    'ok',
-    `Electron ${process.versions.electron} · Node ${process.versions.node} · ${process.platform}`,
+    nodeMajor >= 20 ? 'ok' : 'warn',
+    `Electron ${process.versions.electron} · Node ${process.versions.node} · ${process.platform}/${process.arch}`,
+    nodeMajor >= 20 ? '' : '引擎需要 Node 20 及以上；请升级到新版客户端。',
   );
 
+  const stateWritable = Boolean(stateDir && canWriteDir(stateDir));
+  const stateFile = jsonFileStatus(stateFilePath());
+  const stateStatus = !stateWritable || (stateFile.file && !stateFile.valid)
+    ? 'fail'
+    : stateFile.file
+      ? 'ok'
+      : 'warn';
+  add(
+    '工作台',
+    '本地存档',
+    stateStatus,
+    !stateWritable
+      ? `${stateDir || '尚未初始化'} · 不可写`
+      : `${stateDir || '尚未初始化'} · ${
+          stateFile.file
+            ? stateFile.valid
+              ? `${(stateFile.size / 1024).toFixed(1)} KB`
+              : '存档文件无法解析'
+            : '尚未生成存档文件'
+        }`,
+    !stateWritable
+      ? '检查存档目录的写入权限；设置、会话与主题都需要保存在这里。'
+      : stateFile.file && !stateFile.valid
+        ? '先备份 workbench-state.json；重新保存一次设置即可重建。'
+        : stateFile.file
+          ? ''
+          : '完成一次设置修改后会自动生成，不影响当前使用。',
+  );
+
+  const engineCli = statOf(path.join(paths.engineDir, 'apps', 'cli', 'lib', 'bin.js'));
   add(
     '路径',
     '引擎安装目录',
-    paths.engineDir && statOf(path.join(paths.engineDir, 'apps', 'cli', 'lib', 'bin.js')).file
-      ? 'ok'
-      : 'fail',
+    paths.engineDir && engineCli.file ? 'ok' : 'fail',
     paths.engineDir
-      ? paths.engineDir
+      ? `${paths.engineDir} · CLI ${engineCli.file ? '已找到' : '缺少 apps/cli/lib/bin.js'}`
       : '未配置',
     '在「引擎」页签选择包含 apps/cli 的 DSH 引擎目录。',
   );
 
+  const registryFile = jsonFileStatus(path.join(paths.dataPath, '_meta', 'registry.json'));
+  const registryReady =
+    registryFile.file &&
+    registryFile.valid &&
+    registryFile.data &&
+    Array.isArray(registryFile.data.scenes);
   add(
     '路径',
     '引擎数据目录',
-    statOf(path.join(paths.dataPath, '_meta', 'registry.json')).file ? 'ok' : 'fail',
+    registryReady ? 'ok' : 'fail',
     paths.dataPath || '未配置',
-    '在「引擎」页签选择 .dsh 数据目录，工作台只读扫描它。',
+    !registryFile.file
+      ? '在「引擎」页签选择 .dsh 数据目录。'
+      : registryReady
+        ? ''
+        : '_meta/registry.json 格式不正确；请检查引擎是否完整初始化。',
   );
 
+  const workspaceExists = statOf(paths.workspacePath).dir;
+  const workspaceReadable = workspaceExists && canReadDir(paths.workspacePath);
+  const filesExists = statOf(paths.filesRoot).dir;
+  const filesReadable = filesExists && canReadDir(paths.filesRoot);
   add(
     '路径',
-    '文件浏览根目录',
-    paths.filesRoot && statOf(paths.filesRoot).dir ? 'ok' : 'fail',
-    paths.filesRoot || '未配置',
-    '文件工作台以该目录为边界，可以继续返回上级。',
+    '工作目录',
+    !filesReadable || (workspaceExists && !workspaceReadable)
+      ? 'fail'
+      : workspaceExists
+        ? 'ok'
+        : 'warn',
+    `工作区 ${workspaceReadable ? '✓' : workspaceExists ? '不可读' : '未创建'} · 文件根 ${
+      filesReadable ? '✓' : filesExists ? '不可读' : '不可用'
+    } · ${paths.filesRoot || '未配置'}`,
+    !filesReadable
+      ? '检查设置里的文件浏览根目录：目录需要存在且可读。'
+      : workspaceExists && !workspaceReadable
+        ? '工作区目录不可读，请检查权限。'
+        : workspaceExists
+          ? ''
+          : '终端和部分会话默认使用工作区目录；推荐创建 <root>/workspace。',
   );
 
   const toolsCount = countEntries(paths.toolsPath);
-  add(
-    '工具',
-    '工具目录',
-    toolsCount > 0 ? 'ok' : toolsCount === 0 ? 'warn' : 'fail',
-    toolsCount >= 0 ? `${paths.toolsPath} · ${toolsCount} 个条目` : '目录不存在',
-    toolsCount === 0 ? '目录为空不影响运行，但文件工作台会从根目录打开。' : '检查设置里的工具目录。',
-  );
-
   const skills = scanSkills(paths.skillsPath);
+  const skillsReady = skills.ok && skills.entries.length > 0;
+  const toolsReady = toolsCount > 0;
   add(
     '工具',
-    '技能目录',
-    skills.ok && skills.entries.length > 0 ? 'ok' : skills.ok ? 'warn' : 'fail',
-    skills.ok ? `${paths.skillsPath} · ${skills.entries.length} 个 SKILL.md` : skills.error,
-    skills.entries.length === 0 ? '放入带 SKILL.md 的技能目录后重新体检。' : '检查技能目录权限。',
+    '工具与技能',
+    !skills.ok ? 'fail' : skillsReady && toolsReady ? 'ok' : 'warn',
+    `${
+      toolsCount >= 0 ? `${toolsCount} 个工具` : '工具目录不可用'
+    } · ${skills.ok ? `${skills.entries.length} 个技能` : skills.error}`,
+    !skills.ok
+      ? '检查设置里的技能目录权限。'
+      : skills.entries.length === 0
+        ? '放入带 SKILL.md 的技能目录后重新体检。'
+        : toolsCount < 0
+          ? '检查设置里的工具目录。'
+          : toolsCount === 0
+            ? '工具目录为空不影响运行。'
+            : '',
   );
 
   add(
@@ -1399,69 +1487,63 @@ function runHealthCheck(engineSettings) {
   );
 
   const engine = scanEngine(paths.dataPath);
-  add(
-    '引擎',
-    '场景索引',
-    engine.ok && engine.scenes.length > 0 ? 'ok' : engine.ok ? 'warn' : 'fail',
-    engine.ok ? `${engine.scenes.length} 个场景` : engine.errors[0] || '无法读取 registry',
-    '确认数据目录里存在 _meta/registry.json。',
-  );
-
+  const sessionCount = engine.scenes.reduce((sum, scene) => sum + scene.sessions.length, 0);
   const boundScenes = engine.scenes.filter((scene) => scene.primarySessionId).length;
   add(
-    '核心插件',
-    '会话绑定',
-    boundScenes > 0 ? 'ok' : 'warn',
-    `${boundScenes} / ${engine.scenes.length} 个场景关联了 Harness 会话`,
-    '在 DSH 里把场景绑定到会话后，工作台才能自动跳转。',
+    '引擎',
+    '场景与会话',
+    !engine.ok ? 'fail' : engine.scenes.length === 0 ? 'warn' : boundScenes < engine.scenes.length ? 'warn' : 'ok',
+    engine.ok
+      ? `${engine.scenes.length} 个场景 · ${sessionCount} 个会话 · ${boundScenes}/${engine.scenes.length} 已绑定`
+      : engine.errors[0] || '无法读取 registry',
+    !engine.ok
+      ? '确认 _meta/registry.json 格式正确，再重启引擎。'
+      : engine.scenes.length === 0
+        ? '先在 DSH 里创建场景，工作台才会显示盒子。'
+        : boundScenes < engine.scenes.length
+          ? '在 DSH 里把未绑定的场景关联到会话，盒子才能自动跳转。'
+          : '',
   );
 
-  const pluginManifest = statOf(path.join(paths.dataPath, '_meta', 'plugin-manifest.json'));
-  add(
-    '核心插件',
-    '插件清单',
-    pluginManifest.file ? 'ok' : 'warn',
-    pluginManifest.file ? '已找到 _meta/plugin-manifest.json' : '未找到插件清单',
-    '确认 DSH 核心协作插件已安装并初始化。',
-  );
-
-  const collabCount = countEntries(path.join(paths.dataPath, 'collab'));
-  add(
-    '核心插件',
-    '协作通道',
-    collabCount > 0 ? 'ok' : collabCount === 0 ? 'warn' : 'warn',
-    collabCount >= 0 ? `${collabCount} 个协作条目` : '还没有 collab 目录',
-    '协作通道在首次派发任务后生成；若长期为空，检查 dsh-collab 插件。',
-  );
-
+  const pluginManifest = jsonFileStatus(path.join(paths.dataPath, '_meta', 'plugin-manifest.json'));
   const eventsStat = statOf(path.join(paths.dataPath, 'events', 'events.jsonl'));
   const dispatchStat = statOf(path.join(paths.dataPath, 'events', 'dispatch.jsonl'));
-  add(
-    '核心插件',
-    '事件与派发日志',
-    eventsStat.file && dispatchStat.file ? 'ok' : 'warn',
-    `events ${eventsStat.file ? '✓' : '×'} · dispatch ${dispatchStat.file ? '✓' : '×'}`,
-    '缺少日志时，引擎侧的任务与活动不会出现在工作台。',
-  );
-
   const skillIndex = statOf(path.join(paths.dataPath, 'skills', '_index.md'));
+  const collabCount = countEntries(path.join(paths.dataPath, 'collab'));
+  const pluginHints = [];
+  if (!pluginManifest.file) pluginHints.push('安装并初始化 dsh-collab 后会生成插件清单。');
+  if (pluginManifest.file && !pluginManifest.valid) {
+    pluginHints.push('插件清单无法解析，重新安装或初始化 dsh-collab。');
+  }
+  if (!eventsStat.file) pluginHints.push('打开一次引擎会话后会生成 events.jsonl。');
+  if (!dispatchStat.file) pluginHints.push('派发一次任务后会生成 dispatch.jsonl。');
+  if (!skillIndex.file) pluginHints.push('在 DSH 里运行一次技能扫描会生成 skills/_index.md。');
+  if (collabCount <= 0) pluginHints.push('首次派发任务后才会出现协作条目。');
+  const pluginReady =
+    pluginManifest.file &&
+    pluginManifest.valid &&
+    eventsStat.file &&
+    dispatchStat.file &&
+    skillIndex.file &&
+    collabCount > 0;
+  const pluginName = pluginManifest.data && pluginManifest.data.name;
+  const pluginVersion = pluginManifest.data && pluginManifest.data.version;
   add(
     '核心插件',
-    '技能索引',
-    skillIndex.file ? 'ok' : 'warn',
-    skillIndex.file ? '已找到 skills/_index.md' : '未找到技能索引',
-    '运行一次 DSH 技能扫描后索引会重新生成。',
-  );
-
-  const ledger = statOf(
-    path.join(paths.dataPath, 'storages', 'cost-meter', 'ledger.json'),
-  );
-  add(
-    '引擎',
-    '计费账本',
-    ledger.file ? 'ok' : 'warn',
-    ledger.file ? '已找到 cost-meter 账本' : '未找到 cost-meter 账本',
-    '没有账本只影响费用栏显示，不影响引擎运行。',
+    '核心插件',
+    pluginManifest.file && !pluginManifest.valid ? 'fail' : pluginReady ? 'ok' : 'warn',
+    [
+      pluginManifest.file
+        ? pluginManifest.valid
+          ? `${pluginName || '清单'}${pluginVersion ? ` v${pluginVersion}` : ''}`
+          : '清单无法解析'
+        : '清单缺失',
+      `事件 ${eventsStat.file ? '✓' : '×'}`,
+      `派发 ${dispatchStat.file ? '✓' : '×'}`,
+      `技能索引 ${skillIndex.file ? '✓' : '×'}`,
+      `协作 ${collabCount >= 0 ? collabCount : '—'} 条`,
+    ].join(' · '),
+    pluginHints.slice(0, 2).join(' '),
   );
 
   return {
@@ -2330,7 +2412,27 @@ ipcMain.handle('local-tts:open-log', async () => {
   }
 });
 
-ipcMain.handle('app:version', () => app.getVersion());
+/**
+ * 开发态用 `electron electron/main.cjs` 启动时，app.getVersion() 拿到的是
+ * Electron 自身版本（如 38.8.6），不是工作台版本。优先读应用自带的 package.json，
+ * 找不到才退回 app.getVersion()，并过滤掉 Electron 版本号。
+ */
+function resolveAppVersion() {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'),
+    );
+    if (pkg && typeof pkg.version === 'string' && pkg.version.trim()) {
+      return pkg.version.trim();
+    }
+  } catch {
+    /* 打包结构异常时走兜底 */
+  }
+  const version = app.getVersion();
+  return version && version !== process.versions.electron ? version : '';
+}
+
+ipcMain.handle('app:version', () => resolveAppVersion());
 
 ipcMain.handle('shell:open-external', async (_event, url) => {
   try {

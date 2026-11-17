@@ -768,7 +768,11 @@ export default function App() {
       data-media={theme.media?.kind ?? 'none'}
       style={themeStyle}
     >
-      <ThemeBackdrop theme={theme} motion={settings.appearance.motion} />
+      {/* 会话桌面打开时主界面被完全遮住，暂停底层视频避免两路解码抢帧。 */}
+      <ThemeBackdrop
+        theme={theme}
+        motion={settings.appearance.motion && !boardOpen}
+      />
       <TitleBar
         mode={boardOpen ? 'board' : 'workbench'}
         onModeChange={(mode) => setBoardOpen(mode === 'board')}
@@ -959,6 +963,7 @@ export default function App() {
           sessions={sessions}
           actions={moduleActions}
           settings={settings}
+          theme={theme}
           engine={engine}
           engineLoading={engineLoading}
           engineProcess={engineProcess}

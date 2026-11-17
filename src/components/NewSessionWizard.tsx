@@ -117,6 +117,17 @@ export function NewSessionWizard({
     [],
   );
 
+  // 只统计当前构建实际注册的模块：公开构建里不应出现本机扩展的计数或图例。
+  const registeredIds = useMemo(() => new Set(modules.map((item) => item.manifest.id)), [modules]);
+  const enabledCount = form.modules.filter((moduleId) => registeredIds.has(moduleId)).length;
+  const visibleOrigins = useMemo(
+    () =>
+      MODULE_ORIGINS.filter((origin) =>
+        modules.some((item) => originOf(item.manifest).id === origin.id),
+      ),
+    [modules],
+  );
+
   /** 引擎里登记过的 Harness 会话，按 sessionId 去重后供会话绑定。 */
   const harnessOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -404,14 +415,14 @@ export function NewSessionWizard({
                   <div className="wizard-modules-head">
                     <span>预置模块</span>
                     <div className="origin-legend" aria-label="模块来源图例">
-                      {MODULE_ORIGINS.map((origin) => (
+                      {visibleOrigins.map((origin) => (
                         <em key={origin.id} className={origin.id} title={origin.hint}>
                           <i />
                           {origin.short}
                         </em>
                       ))}
                     </div>
-                    <small>{form.modules.length} 个启用</small>
+                    <small>{enabledCount} 个启用</small>
                   </div>
                   <div className="wizard-module-groups">
                     {MODULE_CATEGORIES.map((category) => {

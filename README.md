@@ -1,184 +1,105 @@
 # DSH 中枢 · 集成工作台
 
-一个围绕 DSH 引擎的本地桌面工作台：Electron 负责窗口、终端、文件与系统能力，React 负责会话桌面、盒子布局和模块装配。它不是聊天客户端的替代品，而是把 DSH 的会话、记忆、技能与本机工具投射到一块可编排的桌面上。
+一个围绕 DSH 引擎的本地桌面工作台：Electron 负责窗口、终端、文件与系统能力，React 负责会话桌面、盒子布局和模块装配。它不替代对话客户端，而是把 DSH 的会话、记忆、技能与本机工具投射到一块可编排的桌面上。
 
-![中枢台 · 文件工作台](docs/screenshots/workbench-hub.png)
+![中枢台 · 记忆神经元](docs/screenshots/中枢台-记忆神经元.png)
 
 - 代码仓库：<https://github.com/sessionhive/dsh-workbench>
-- 完整文档：[docs/README.md](docs/README.md)
-- Linux 安装、路径与打包：[docs/linux.md](docs/linux.md)
+- 完整文档：[docs/文档索引.md](docs/文档索引.md)
 - 协作插件：[sessionhive/dsh-collab](https://github.com/sessionhive/dsh-collab)
 
-> 仓库只包含工作台外壳，不包含 DSH 引擎本体。使用前需要本机已安装 DSH，并能找到它的 CLI 与数据目录。
+> 仓库只包含工作台外壳，不包含 DSH 引擎本体。首次部署需要网络；没有引擎时由一键脚本下载。
 
 ## 功能一览
 
-- **中枢台**：左侧会话栏 + 中心视图。引擎、文件、待办、神经元、网页、记忆、终端、派单记录（PD 派单 / TZ 通知）、运行状态按会话启用和排序。
-- **会话桌面**：每个会话一块 12 列网格桌面，用盒子自由拼装；支持拖拽、缩放、专注、添加/移除、收纳和 `Ctrl + S` 保存。
-- **引擎托管**：启动时拉起 `dsh web --no-open --port 3083`，抓取 token 地址并嵌入 webview，退出时收掉进程树。
-- **本地工具**：文件浏览/编辑、多标签网页、终端多开、会话待办、记忆检索、3D 神经元、派单流水与运行状态。
-- **语音播报**：朗读当前会话的回复，简报整篇按段落读完，代码和表格跳过；可选本地 GPT-SoVITS v2 复刻音色（用一段参考录音固定声音，不出网）或 16 套 Edge 神经音色（普通话、方言、台湾、粤语、多语种），选定后每次都是同一个声音。底栏左下角可暂停、继续或停止，新回复会打断旧的。
-- **浏览器收纳**：顶栏搜索框左侧的独立地址册，内置常用网页 AI；二级窗口关闭保留页面状态，彻底释放后重新加载，支持置顶与临时弹窗。
-- **扩展模块**：仓库与发布包只带内置模块；第三方或自制的扩展放在本地扩展目录，按需加载，不随仓库分发。
-- **协作数据**：通过 dsh-collab 读取角色卡、总结、按日记忆、技能与工单，并接受只读边界约束。
-- **十套主题**：黑、青、蓝、白、绿、粉、紫、星河、纸稿、琉璃，自定义主题随存档保存。新建时可以先选一个已有主题当模板；配色之外还有「标准 / 纸稿 / 粗野 / 终端 / 柔光 / 玻璃」六种风格，以及圆角、纹理（含星空）、字体、阴影、标题栏五项微调，可以逐项覆盖风格默认值；文字色可按背景亮度自动选白 / 黑，也可手动固定。背景支持纯色与双色 / 三色渐变，也可以用一张贴纸或一段视频当背景（带遮罩浓度与模糊调节）。
+- **中枢台**：左侧会话栏加中心视图，引擎、文件、待办、神经元、网页、记忆、终端、派单与运行状态按会话启用和排序。
+- **会话桌面**：每个会话一块 12 列网格桌面，用盒子自由拼装，支持拖拽、缩放、专注、添加/移除、收纳和 `Ctrl + S` 保存。
+- **引擎托管**：启动时拉起 `dsh web --no-open --port 3083`，抓取 token 地址嵌入 webview，退出时收掉进程树。
+- **浏览器收纳**：顶栏独立地址册，二级窗口关闭后只挂起并保留页面状态，彻底释放才重新加载。
+- **语音播报**：朗读当前会话的最新回复，可选本地 GPT-SoVITS 复刻音色或 16 套 Edge 神经音色，支持暂停、继续与停止。
+- **十套主题与六种风格**：曜石黑、深空青、月夜蓝、晨雾白、森屿绿、樱粉、星紫、纸稿、琉璃、星河；支持标准 / 纸稿 / 粗野 / 终端 / 柔光 / 玻璃六种风格，以及渐变、贴纸或视频背景、文字色与圆角/纹理/字体/阴影等微调。
+- **协作数据**：通过 dsh-collab 读取角色卡、总结、按日记忆、技能与工单，并遵守只读边界。
+
+会话桌面示例：
+
+![会话桌面 · 记忆神经元与引擎](docs/screenshots/会话桌面-记忆神经元与引擎.png)
 
 ## 环境要求
 
-- Windows 10 / 11，或 Linux x86_64（AppImage / deb；建议 Ubuntu 22.04+ 或 Debian 12+）
+- Windows 10 / 11，或 Linux x86_64（AppImage / deb）
 - Node.js 20 或更高版本
-- 已安装并可运行的 DSH 引擎
-- 首次安装依赖需要网络
+- 首次部署需要网络；已有 DSH 引擎可以跳过下载
 
 ## 快速开始
 
-推荐把仓库克隆为 `<root>/workbench`，并让 `<root>/engine` 与 `<root>/engine-data/.dsh` 分别存在：
+推荐把仓库放在 `<root>/app`，其余目录由一键脚本创建（root推荐命名：Workbench）：
+
+```text
+<root>/
+├─ app/            工作台仓库（本仓库）
+├─ engines/        DSH 引擎（apps/cli/lib/bin.js）
+├─ data/.dsh/      引擎数据（_meta/registry.json）
+├─ workspace/      会话工作目录
+└─ _dev/tools/     工具目录
+```
 
 ```powershell
-mkdir D:\DSH
-cd D:\DSH
-git clone https://github.com/sessionhive/dsh-workbench.git workbench
-cd workbench
+git clone https://github.com/sessionhive/dsh-workbench.git app
+cd app
+node scripts/setup.mjs
+```
+
+Windows 也可以双击 `scripts\setup.cmd`。脚本会创建 `engines / data/.dsh / workspace / _dev/tools`，安装并构建工作台，下载 DSH，初始化数据目录，安装 dsh-collab，备份并更新 `cordis.patch.yml`，最后启动客户端。先预览流程用 `node scripts/setup.mjs --dry-run`。
+
+手动安装：
+
+```powershell
 npm install
 npm run build
 npm start
 ```
 
-`npm start` 需要先有 `dist/` 构建产物。开发时用：
+已有引擎时，把引擎装到 `<root>/engines`、数据放进 `<root>/data/.dsh` 即可使用默认路径；也可以按 [引擎与插件](docs/引擎与插件.md) 用设置页或环境变量覆盖。dsh-collab 是协作功能必装项，一键脚本会自动处理。
 
-```powershell
-npm run dev
-```
-
-开发模式会启动 Vite（127.0.0.1:5173）并拉起 Electron，改前端代码自动热更新。
-
-Linux 可以直接用 Release 里的 AppImage / deb，也可以从源码运行：
-
-```bash
-chmod +x dsh-workbench-*.AppImage
-./dsh-workbench-*.AppImage
-
-# 或从源码
-npm ci
-npm run build
-npm start
-```
-
-Linux 的路径默认值、终端 shell、端口排查与打包方式见 [docs/linux.md](docs/linux.md)。
-
-## 配置引擎路径
-
-工作台不写死任何机器路径。第一次启动时按“程序所在位置”推导默认值，也可以在设置面板的「引擎」页签里逐项覆盖。默认布局（以仓库位于 `<root>/workbench` 为例）：
-
-| 用途 | 默认位置 |
-| --- | --- |
-| 引擎安装目录 | `<root>/engine`（需包含 `apps/cli/lib/bin.js`） |
-| 引擎数据目录 | `<root>/engine-data/.dsh`（需包含 `_meta/registry.json`） |
-| 工作区目录 | `<root>/workspace` |
-| 文件浏览根目录 | `<root>` |
-| 技能目录 | `<dataPath>/skills` |
-| 工具目录 | `<root>/tools` |
-
-也可以不移动目录，直接用环境变量指定：
-
-```powershell
-$env:DSH_ENGINE_DIR = "D:\DSH\engine"
-$env:DSH_HOME = "D:\DSH\engine-data\.dsh"
-$env:DSH_PORT = "3083"
-$env:DSH_NODE = "C:\Program Files\nodejs\node.exe"
-$env:DSH_STATE_DIR = "D:\DSH\state"   # 可选：覆盖工作台存档目录
-```
-
-`npm start` 会自动拉起 `dsh web --no-open --port 3083`，抓取它打印的本地地址并嵌到工作台里；退出时一并收掉该进程。端口被占用时会在界面上提示，可用 `DSH_PORT` 换端口。
-
-更完整的路径、端口和日志说明见 [docs/engine-and-plugins.md](docs/engine-and-plugins.md)。
-
-## 安装 dsh-collab（协作功能必装）
-
-引擎侧的角色卡、总结、按日记忆、技能索引、工单与协作看板都来自 [dsh-collab](https://github.com/sessionhive/dsh-collab)。不装插件时工作台仍可启动，文件、终端、网页和待办可用，但引擎协作相关面板会是空的。
-
-最简方式是在 DSH 的「插件 → Discover」里添加市场索引：
-
-```text
-https://cdn.jsdelivr.net/gh/sessionhive/dsh-collab@main/market/index.json
-```
-
-然后从 Discover 安装 `dsh-collab`。也可以手动装进 DSH profile 并在 `cordis.patch.yml` 里登记：
-
-```yaml
-- insert:
-    - id: workbench-core
-      name: '@sessionhive/dsh-collab'
-      config:
-        dataRoot: 'D:/DSH/engine-data/.dsh'
-```
-
-安装后重启引擎，工作台底栏显示「DSH 引擎已连接」，再在「设置 → 体检 → 核心插件」确认没有异常。完整步骤、升级、卸载和故障排查见 [docs/engine-and-plugins.md](docs/engine-and-plugins.md)。
+Linux 可以直接用 Release 里的 AppImage / deb，或按 [Linux 使用与打包](docs/Linux使用与打包.md) 从源码运行。
 
 ## 文档
 
-| 文档 | 内容 |
-| --- | --- |
-| [文档索引](docs/README.md) | 先看哪一篇、三分钟路径 |
-| [使用流程](docs/usage.md) | 中枢台、会话桌面、盒子、设置与日常流程 |
-| [DSH 引擎与插件](docs/engine-and-plugins.md) | 引擎目录约定、托管启动、dsh-collab 安装与验证 |
-| [Agent 一键部署](docs/agent-setup.md) | 给 AI Agent 的端到端执行清单与 PowerShell 脚本 |
-| [项目结构](docs/architecture.md) | 进程模型、模块系统、IPC、存档与安全边界 |
-| [更新日志](CHANGELOG.md) | 版本变更、依赖与已知限制 |
-
-会话桌面示例：
-
-![会话桌面](docs/screenshots/scene-desktop.png)
-
-## 常用脚本
-
-| 命令 | 作用 |
-| --- | --- |
-| `npm run dev` | Vite + Electron 开发模式 |
-| `npm run build` | 类型检查并构建到 `dist/` |
-| `npm run typecheck` | 只做 TypeScript 类型检查 |
-| `npm start` | 启动已构建的桌面客户端 |
-| `npm run shot` | 启动并截一张图到 `shot.png` |
-
-Windows 下可以运行 `create-shortcut.ps1` 在桌面创建启动快捷方式。脚本从自身位置推导路径，仓库放在哪里都可以，但需要先 `npm install` 和 `npm run build`。
+| 文档                                        | 内容                                             |
+| ------------------------------------------- | ------------------------------------------------ |
+| [文档索引](docs/文档索引.md)                | 先看哪一篇、三分钟路径                           |
+| [一键部署](docs/一键部署.md)                | 脚本做了什么、参数、目录结构与故障排查           |
+| [使用说明](docs/使用说明.md)                | 中枢台、会话桌面、盒子、新建会话、设置与日常流程 |
+| [引擎与插件](docs/引擎与插件.md)            | 引擎目录约定、托管启动、dsh-collab 安装与验证    |
+| [项目架构](docs/项目架构.md)                | 进程模型、模块系统、IPC、存档与安全边界          |
+| [Linux 使用与打包](docs/Linux使用与打包.md) | AppImage/deb、路径默认值、终端与 CI 打包         |
+| [更新日志](CHANGELOG.md)                    | 版本变更、依赖与已知限制                         |
 
 ## 数据与隐私
 
-- 工作台自己的状态（会话、布局、主题、路径设置）保存在 `%APPDATA%/DSH-Workbench/workbench-state.json`；无法写入时退回项目内 `.data/`。可用 `--state-dir` 或 `DSH_STATE_DIR` 覆盖。
-- 这两个位置都不应提交到仓库，已加入 `.gitignore`。
-- 引擎数据默认只读：只扫描会话注册表、角色卡、总结、记忆目录与 `SKILL.md`，只有角色卡和 `SKILL.md` 允许写回。
-- `.dsh` 目录与 `.credentials.yaml` 永远不经过文件浏览/预览/写入通道。
+- 工作台状态保存在 `%APPDATA%/DSH-Workbench/workbench-state.json`（Linux 为 `~/.config/DSH-Workbench/`），可用 `--state-dir` 或 `DSH_STATE_DIR` 覆盖。
+- 引擎数据默认只读：只扫描会话注册表、角色卡、总结、记忆目录与 `SKILL.md`；只有角色卡和 `SKILL.md` 允许写回。
+- `.dsh` 目录与 `.credentials.yaml` 永远不经过文件浏览、预览或写入通道。
 - 引擎启动命令里的 token 只在内存中传给内嵌页面，写日志前会脱敏成 `token=***`。
-- 内嵌的 DSH 页面运行在关闭 Node 集成、开启 sandbox 的 webview 中；外部链接只允许 `http/https` 并交给系统浏览器。
-- 终端、文件浏览和选择目录的权限范围由用户在设置里选择的根目录决定。
-- 工具目录扫描只读列出脚本并读取 README/头部注释，不执行脚本；`.dsh` 与凭据路径直接拒绝。
-- 仓库与发布包不包含任何第三方模块的代码与资源；本地扩展目录已被 `.gitignore` 排除。
-- dsh-collab 写入的角色卡、记忆和工单属于引擎数据，备份或迁移前请先退出工作台。
+- 内嵌 DSH 页面运行在关闭 Node 集成、开启 sandbox 的 webview 中；外部链接只允许 `http/https` 并交给系统浏览器。
+- 仓库与发布包不包含第三方模块的代码与资源；本地扩展目录已被 `.gitignore` 排除。
 
-## 目录结构
+## 常用脚本
 
-```
-electron/            主进程：窗口、托盘、引擎托管、IPC、文件沙箱、终端
-src/
-  components/        顶栏、底栏、会话栏、会话桌面、设置、浏览器收纳等界面
-  board/             会话桌面的网格、盒子、拖拽与存档
-  modules/           内置模块（引擎、待办、文件、网页、终端、记忆、神经元、派单、运行状态）
-  hooks/             引擎数据、进程状态、计费、系统指标、长按排序
-  terminal/          终端运行时（按盒子常驻 shell）
-  engine/            引擎数据类型与会话绑定
-  styles.css         全局样式与主题变量
-docs/                使用流程、插件依赖、Agent 部署、结构说明
-assets/              图标
-dist/                构建产物（不提交）
-```
+| 命令                     | 作用                                                       |
+| ------------------------ | ---------------------------------------------------------- |
+| `node scripts/setup.mjs` | 一键部署并启动（`--dry-run` 预览，`--skip-launch` 只安装） |
+| `npm run dev`            | Vite + Electron 开发模式                                   |
+| `npm run build`          | 类型检查并构建到 `dist/`                                   |
+| `npm start`              | 启动已构建的桌面客户端                                     |
+| `npm run dist:linux`     | 构建 Linux AppImage / deb                                  |
 
 ## 已知限制
 
-- 需要外部的 DSH 引擎；没有引擎时外壳可以启动，终端/文件/网页/待办仍可用，但引擎页与会话数据为空。
-- 仓库与发布包不包含第三方模块的代码与资源；扩展模块只在本地扩展目录存在时加载。
-- Linux 目前提供 x86_64 的 AppImage / deb；macOS 尚未验证。Wayland、托盘与部分 GPU 环境可能降级，见 [docs/linux.md](docs/linux.md)。
+- 需要外部的 DSH 引擎；没有引擎时外壳可以启动，但引擎页与会话数据为空。
 - 会话与 DSH 会话的定位依赖侧栏标题匹配，DSH 页面结构变化时可能需要调整。
-- Linux 安装包由 electron-builder 生成；Windows 安装包尚未提供，仍从源码运行。
+- Linux 目前提供 x86_64 的 AppImage / deb；macOS 尚未验证。Wayland、托盘与部分 GPU 环境可能降级。
+- Windows 安装包尚未提供，仍从源码运行。
 
 ## 许可证
 

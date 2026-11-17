@@ -1,6 +1,7 @@
 import type { EngineSnapshot } from './engine/types';
 import { createDefaultModules } from './moduleDefaults';
 import { localTemplateExtras } from './modules/local';
+import { getModuleDefinition } from './modules/runtime';
 import type { HarnessBinding, IconName, Session } from './types';
 
 export type TemplateSource = 'builtin' | 'custom' | 'engine';
@@ -278,7 +279,18 @@ export function buildTemplates(
     return { ...template, modules };
   };
 
-  return [...builtinTemplates.map(withLocal), ...custom.map(withLocal), ...engineTemplates];
+  /**
+   * 模板里的模块只保留当前构建已注册的项。
+   * 本机存档里的自定义模板可能带着外部模块 id；公开构建没有注册这些模块，
+   * 模板卡片和预置模块里就不应该再出现或计数它们。
+   */
+  const onlyRegistered = (template: SessionTemplate): SessionTemplate => ({
+    ...template,
+    modules: template.modules.filter((moduleId) => Boolean(getModuleDefinition(moduleId))),
+  });
+
+  return [...builtinTemplates.map(withLocal), ...custom.map(withLocal), ...engineTemplates]
+    .map(onlyRegistered);
 }
 
 let templateSequence = 0;
@@ -300,7 +312,7 @@ export function templateFromConfig(
     color: config.color,
     icon: config.icon,
     summary: base?.summary || '由用户保存的自定义模板，可在新建会话时复用。',
-    modules: [...config.modules],
+    modules: config.modules.filter((moduleId) => Boolean(getModuleDefinition(moduleId))),
     harness: config.harness ?? base?.harness ?? null,
     source: 'custom',
     tags: base?.tags?.length ? base.tags : ['自定义', config.scene || '会话'],

@@ -6801,6 +6801,14 @@ body.terminal-splitting {
   gap: 12px;
 }
 
+.health-pane-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .health-summary {
   display: flex;
   align-items: center;
@@ -10788,12 +10796,13 @@ html[data-titlebar="panel"] .app .titlebar {
   --line-strong: var(--tb-line-strong);
 }
 
-/* 背景纹理：faint 保留原来的 48px 光晕网格，其余覆盖成方格 / 点阵 / 扫描线。 */
-html[data-texture="none"] .app::before {
+/* 背景纹理：faint 保留原来的 48px 光晕网格，其余覆盖成方格 / 点阵 / 扫描线。
+   会话桌面的 .board-desktop::before 与 .app::before 共用这套规则（见 board.css）。 */
+html[data-texture="none"] :is(.app, .board-desktop)::before {
   display: none;
 }
 
-html[data-texture="grid"] .app::before {
+html[data-texture="grid"] :is(.app, .board-desktop)::before {
   display: block;
   background-image:
     linear-gradient(var(--ui-line) 1px, transparent 1px),
@@ -10802,21 +10811,21 @@ html[data-texture="grid"] .app::before {
   mask-image: none;
 }
 
-html[data-texture="dots"] .app::before {
+html[data-texture="dots"] :is(.app, .board-desktop)::before {
   display: block;
   background-image: radial-gradient(var(--ui-line) 1.4px, transparent 1.6px);
   background-size: 18px 18px;
   mask-image: radial-gradient(ellipse at 50% 0%, #000 0%, transparent 82%);
 }
 
-html[data-texture="scan"] .app::before {
+html[data-texture="scan"] :is(.app, .board-desktop)::before {
   display: block;
   background-image: repeating-linear-gradient(0deg, var(--ui-line) 0 1px, transparent 1px 3px);
   mask-image: none;
 }
 
 /* 星空纹理：多层大小不一的星点错位平铺，靠主题文字色和主色提亮。 */
-html[data-texture="stars"] .app::before {
+html[data-texture="stars"] :is(.app, .board-desktop)::before {
   display: block;
   background-image:
     radial-gradient(1.5px 1.5px at 22% 26%, color-mix(in srgb, var(--text) 82%, transparent) 46%, transparent 54%),
@@ -11100,6 +11109,97 @@ html[data-texture="stars"] .app::before {
   color: var(--text-2);
   font-size: 12px;
   line-height: 1.75;
+}
+
+/* 使用指南与关于合并：折叠成一行，展开后是六步搭建与绑定流程。 */
+.about-guide {
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--field-bg-soft);
+}
+
+.about-guide summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 2px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.about-guide summary::-webkit-details-marker {
+  display: none;
+}
+
+.about-guide summary > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.about-guide summary strong {
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.about-guide summary small {
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.about-guide summary > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 0.18s ease;
+}
+
+.about-guide[open] summary > svg {
+  transform: rotate(180deg);
+}
+
+.about-guide-body {
+  padding: 0 2px 12px;
+}
+
+.about-guide-body ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.about-guide-body li {
+  font-size: 10.5px;
+  line-height: 1.65;
+  color: var(--text-2);
+}
+
+.about-guide-body li b {
+  margin-right: 6px;
+  color: var(--text);
+}
+
+.about-guide-body code,
+.about-guide-body kbd {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+
+.about-guide-note {
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 9.5px;
+  line-height: 1.65;
+  color: var(--muted);
 }
 
 .about-links {

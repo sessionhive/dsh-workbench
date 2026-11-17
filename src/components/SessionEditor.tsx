@@ -61,7 +61,23 @@ export function SessionEditor({
     })).filter((group) => group.rows.length > 0);
   }, [modules]);
 
-  const enabledModules = modules.filter((instance) => instance.enabled).length;
+  // 公开构建不注册本机扩展；存档里遗留的外部模块不计入已启用数量。
+  const registeredIds = useMemo(
+    () => new Set(moduleGroups.flatMap((group) => group.rows.map((row) => row.definition.manifest.id))),
+    [moduleGroups],
+  );
+  const enabledModules = modules.filter(
+    (instance) => instance.enabled && registeredIds.has(instance.moduleId),
+  ).length;
+  const visibleOrigins = useMemo(
+    () =>
+      MODULE_ORIGINS.filter((origin) =>
+        moduleGroups.some((group) =>
+          group.rows.some((row) => originOf(row.definition.manifest).id === origin.id),
+        ),
+      ),
+    [moduleGroups],
+  );
 
   const harnessOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -269,7 +285,7 @@ export function SessionEditor({
             <div className="wizard-modules-head">
               <span>模块装配</span>
               <div className="origin-legend" aria-label="模块来源图例">
-                {MODULE_ORIGINS.map((origin) => (
+                {visibleOrigins.map((origin) => (
                   <em key={origin.id} className={origin.id} title={origin.hint}>
                     <i />
                     {origin.short}

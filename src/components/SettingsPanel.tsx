@@ -15,6 +15,7 @@ import type {
   ToolScriptEntry,
 } from '../engine/types';
 import { categoryOf, listModules, originOf } from '../modules';
+import { localExtensionsEnabled } from '../modules/local';
 import {
   builtinThemes,
   defaultThemeTweaks,
@@ -272,9 +273,14 @@ export function SettingsPanel({
 
   useEffect(() => {
     let alive = true;
-    void window.desktop?.version?.().then((value) => {
-      if (alive && typeof value === 'string') setAppVersion(value);
-    });
+    void window.desktop
+      ?.version?.()
+      .then((value) => {
+        if (alive && typeof value === 'string') setAppVersion(value);
+      })
+      .catch(() => {
+        /* 读不到版本时显示「开发版」 */
+      });
     return () => {
       alive = false;
     };
@@ -624,7 +630,8 @@ export function SettingsPanel({
 
   const chosenShell = shells.find((shell) => shell.id === settings.terminal.shell) ?? null;
 
-  const localChecks = useMemo<HealthCheck[]>(() => {    const modules = listModules();
+  const localChecks = useMemo<HealthCheck[]>(() => {
+    const modules = listModules();
     const required: Array<[string, string]> = [
       ['neuron.view', '神经元'],
       ['files.browser', '文件工作台'],
@@ -639,42 +646,30 @@ export function SettingsPanel({
     const centerViews = modules.filter(
       (definition) => definition.View && definition.manifest.slots.includes('center.view'),
     );
+    const external = modules.filter(
+      (definition) => originOf(definition.manifest).id === 'third-party',
+    );
     return [
-      {
-        id: 'workbench:runtime',
-        group: '工作台',
-        label: '桌面运行时',
-        status: window.desktop ? 'ok' : 'fail',
-        detail: window.desktop
-          ? `preload 已连接 · ${statePath || '存档路径由主进程管理'}`
-          : '浏览器预览环境没有 Electron preload',
-        hint: window.desktop ? '' : '请在桌面客户端里打开设置，网页预览只能看界面。',
-      },
       {
         id: 'workbench:modules',
         group: '工作台',
-        label: '模块注册表',
+        label: '工作台装配',
         status: missing.length > 0 ? 'fail' : 'ok',
         detail:
           missing.length > 0
             ? `缺少 ${missing.map(([, name]) => name).join('、')}`
-            : `${modules.length} 个模块已注册 · ${centerViews.length} 个可作为盒子`,
-        hint: missing.length > 0 ? '检查 src/modules/index.ts 的内置模块注册。' : '',
-      },
-      {
-        id: 'workbench:health',
-        group: '工作台',
-        label: '体检通道',
-        status: health.report ? 'ok' : health.loading ? 'warn' : 'fail',
-        detail: health.report
-          ? `主进程返回 ${health.report.checks.length} 项检查`
-          : health.loading
-            ? '正在等待主进程结果'
-            : health.error || '尚未执行体检',
-        hint: health.report ? '' : '点击右上角「重新体检」。',
+            : `${localExtensionsEnabled ? '本机扩展构建' : '公开构建'} · ${modules.length} 个模块 · ${centerViews.length} 个盒子${
+                external.length > 0 ? ` · ${external.length} 个外部` : ''
+              }`,
+        hint:
+          missing.length > 0
+            ? '检查 src/modules/index.ts 的内置模块注册。'
+            : localExtensionsEnabled
+              ? '外部模块只在本机开发/打包时加载；公开构建 npm run build 不包含它们。'
+              : '从 Git 克隆的版本不会显示外部模块按钮。',
       },
     ];
-  }, [health.error, health.loading, health.report, statePath]);
+  }, []);
 
   const healthChecks = useMemo(
     () => [...localChecks, ...(health.report?.checks ?? [])],
@@ -682,7 +677,7 @@ export function SettingsPanel({
   );
 
   const healthGroups = useMemo(() => {
-    const preferred = ['工作台', '环境', '路径', '工具', '引擎', '核心插件'];
+    const preferred = ['环境', '工作台', '路径', '工具', '引擎', '核心插件'];
     const names = Array.from(new Set(healthChecks.map((check) => check.group)));
     const order = [
       ...preferred.filter((name) => names.includes(name)),
@@ -701,6 +696,38 @@ export function SettingsPanel({
     const status: HealthStatus = failed > 0 ? 'fail' : warned > 0 ? 'warn' : 'ok';
     return { total, failed, warned, passed: total - failed - warned, status };
   }, [healthChecks]);
+
+  const [healthCopied, setHealthCopied] = useState(false);
+  useEffect(() => {
+    if (!healthCopied) return;
+    const timer = window.setTimeout(() => setHealthCopied(false), 2000);
+    return () => window.clearTimeout(timer);
+  }, [healthCopied]);
+
+  const copyHealthReport = async () => {
+    if (!window.desktop?.copyText || healthChecks.length === 0) return;
+    const lines = [
+      'DSH 中枢 · 体检报告',
+      `时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`,
+      `结论：${HEALTH_LABEL[healthSummary.status]} · ${healthSummary.passed}/${healthSummary.total} 项通过`,
+      '',
+    ];
+    healthGroups.forEach((group) => {
+      lines.push(`[${group.name}]`);
+      group.checks.forEach((check) => {
+        lines.push(`${HEALTH_LABEL[check.status]} · ${check.label}：${check.detail}`);
+        if (check.hint && check.status !== 'ok') lines.push(`  提示：${check.hint}`);
+      });
+      lines.push('');
+    });
+    try {
+      const result = await window.desktop.copyText(lines.join('\n'));
+      setHealthCopied(Boolean(result?.ok));
+    } catch {
+      // 剪贴板 IPC 失败时保持按钮原状，不中断设置页。
+      setHealthCopied(false);
+    }
+  };
 
   const startNewTheme = (base: ThemeDefinition = activeTheme) => {
     setDraft(draftFromTheme(base, `custom-${Date.now().toString(36)}`, '我的主题'));
@@ -2041,19 +2068,30 @@ export function SettingsPanel({
                   <div>
                     <h4>一体体检</h4>
                     <p>
-                      逐项检查工作台运行时、目录路径、工具与 DSH 核心插件。别人拿到客户端时，
-                      先跑一遍体检就能看到哪一环没接好。
+                      按「环境 → 工作台 → 路径 → 工具 → 引擎 → 核心插件」一条链路检查，同一环节合并成一行。
+                      本地语音属于个人部署，不在体检范围内；别人拿到客户端时，先跑一遍体检就能看到哪一环没接好。
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    onClick={() => setHealthTick((value) => value + 1)}
-                    disabled={health.loading}
-                  >
-                    <Icon name="refresh" size={13} />
-                    {health.loading ? '检查中' : '重新体检'}
-                  </button>
+                  <div className="health-pane-actions">
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={() => void copyHealthReport()}
+                      disabled={health.loading || healthChecks.length === 0}
+                    >
+                      <Icon name="copy" size={13} />
+                      {healthCopied ? '已复制' : '复制报告'}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={() => setHealthTick((value) => value + 1)}
+                      disabled={health.loading}
+                    >
+                      <Icon name="refresh" size={13} />
+                      {health.loading ? '检查中' : '重新体检'}
+                    </button>
+                  </div>
                 </div>
 
                 <div className={`health-summary ${healthSummary.status}`}>
@@ -2111,7 +2149,7 @@ export function SettingsPanel({
                             <div className="health-item-body">
                               <strong>{check.label}</strong>
                               <small title={check.detail}>{check.detail}</small>
-                              {check.hint && <p>{check.hint}</p>}
+                              {check.hint && check.status !== 'ok' && <p>{check.hint}</p>}
                             </div>
                             <span className="health-state">{HEALTH_LABEL[check.status]}</span>
                           </div>
@@ -2193,6 +2231,52 @@ export function SettingsPanel({
                     </p>
                   </div>
                 </div>
+
+                <details className="about-guide">
+                  <summary>
+                    <span>
+                      <strong>使用指南</strong>
+                      <small>目录 → 引擎 → 插件 → 绑定会话，六步跑通；只体验界面可跳过流程。</small>
+                    </span>
+                    <Icon name="chevronDown" size={13} />
+                  </summary>
+                  <div className="about-guide-body">
+                    <ol>
+                      <li>
+                        <b>准备目录</b>
+                        按 <code>app / engines / data / workspace</code> 四层放置：客户端、DSH
+                        引擎、<code>.dsh</code> 数据与会话工作目录各自分开。
+                      </li>
+                      <li>
+                        <b>安装引擎</b>
+                        把 DSH 引擎解压到 <code>engines/</code>，在「引擎」页签选择引擎目录与{' '}
+                        <code>data/.dsh</code>。
+                      </li>
+                      <li>
+                        <b>安装插件</b>
+                        在引擎里安装并初始化 <code>dsh-collab</code>，角色卡、记忆、技能与工单会写进{' '}
+                        <code>data/.dsh</code>。
+                      </li>
+                      <li>
+                        <b>绑定工作目录</b>
+                        把工作目录指向 <code>workspace/</code>，终端与文件盒子默认从这里开始。
+                      </li>
+                      <li>
+                        <b>添加会话</b>
+                        打开 DSH 引擎 → 设置 → 会话协作，添加一个引擎会话。
+                      </li>
+                      <li>
+                        <b>绑进工作台</b>
+                        回到工作台新建会话并绑定该引擎会话，再添加模块盒子，<kbd>Ctrl</kbd>+
+                        <kbd>S</kbd> 保存布局。
+                      </li>
+                    </ol>
+                    <p className="about-guide-note">
+                      额外补充：外部模块只在本机扩展构建里出现，公开构建不携带；本地语音属于个人部署；
+                      装好后到「体检」页跑一遍，就能看到哪一环还没接好。
+                    </p>
+                  </div>
+                </details>
 
                 <div className="about-links">
                   <button

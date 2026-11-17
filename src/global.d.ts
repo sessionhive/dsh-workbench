@@ -35,6 +35,9 @@ export interface LocalTtsStatus {
 export {};
 
 declare global {
+  /** 由 vite.config.ts 注入：当前构建是否装配本机扩展。 */
+  const __LOCAL_EXTENSIONS__: boolean;
+
   interface Window {
     desktop?: {
       minimize: () => void;

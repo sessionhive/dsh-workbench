@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { BoardTile } from '../board/types';
+import { getModuleDefinition } from '../modules/runtime';
 import type { Session } from '../types';
 import { Icon } from './icons';
+
+/**
+ * 存档里的盒子只有在模块仍注册时才展示。
+ * 本机扩展留下的盒子会留在存档里，但公开构建不注册对应模块，
+ * 因此不能出现在「桌面盒子 / 可用盒子」列表里。
+ */
+function isKnownTile(tile: BoardTile) {
+  return tile.kind !== 'module' || Boolean(getModuleDefinition(tile.moduleId));
+}
 
 interface BoxSettingsPanelProps {
   session: Session;
@@ -50,7 +60,7 @@ export function BoxSettingsPanel({
   onRemoveAll,
   onEnableModule,
 }: BoxSettingsPanelProps) {
-  const boardTiles = tiles.filter(isTileVisible);
+  const boardTiles = tiles.filter((tile) => isKnownTile(tile) && isTileVisible(tile));
   const selected = boardTiles.find((tile) => tile.id === selectedId) ?? boardTiles[0] ?? null;
 
   const previewRows = Math.max(
@@ -59,7 +69,7 @@ export function BoxSettingsPanel({
     selected ? selected.y + selected.h : 0,
   );
 
-  const removedTiles = tiles.filter((tile) => !isTileVisible(tile));
+  const removedTiles = tiles.filter((tile) => isKnownTile(tile) && !isTileVisible(tile));
   const availableRows = [
     ...removedTiles.map((tile) => ({
       tile,

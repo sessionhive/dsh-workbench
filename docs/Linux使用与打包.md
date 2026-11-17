@@ -1,8 +1,6 @@
 # Linux 使用与打包
 
-这一版开始提供 Linux x86_64 的 AppImage 与 deb。工作台仍然是 DSH 引擎的外壳：它负责界面、会话桌面、文件、终端和浏览器收纳，DSH 引擎与本机 Node.js 需要单独准备。
-
-![Linux 上的会话中枢](screenshots/linux-overview.png)
+提供 Linux x86_64 的 AppImage 与 deb。工作台仍然是 DSH 引擎的外壳：它负责界面、会话桌面、文件、终端和浏览器收纳，DSH 引擎与本机 Node.js 需要单独准备。
 
 ## 1. 前提
 
@@ -74,7 +72,7 @@ sudo apt remove dsh-workbench
 | 技能目录 | 默认 `<数据目录>/skills` |
 | 工具目录 | 默认 `~/.config/DSH-Workbench/tools` |
 
-默认值会按安装形态推导：源码运行优先用仓库旁的 `engine/` 与 `engine-data/.dsh`；安装态优先找 `~/DSH/engine`、`~/dsh/engine`、`~/.dsh`。找不到时仍然可以在设置里手动指定。
+默认值会按安装形态推导：源码运行优先用工作台上一级的 `engines/` 与 `data/.dsh/`（兼容旧的 `engine/`、`engine-data/.dsh`）；安装态优先找 `~/DSH/engine`、`~/dsh/engine`、`~/.dsh`。找不到时仍然可以在设置里手动指定。
 
 也可以完全不改设置，用环境变量启动：
 
@@ -101,17 +99,23 @@ node <引擎目录>/apps/cli/lib/bin.js web --no-open --port 3083
 
 ## 4. 从源码运行
 
-适合想跟进代码或自己打包的人：
+适合想跟进代码或自己打包的人。推荐让仓库位于 `<root>/app`，并用一键脚本准备好引擎、数据和插件：
 
 ```bash
-git clone https://github.com/sessionhive/dsh-workbench.git
-cd dsh-workbench
+git clone https://github.com/sessionhive/dsh-workbench.git app
+cd app
+node scripts/setup.mjs
+```
+
+也可以手动安装：
+
+```bash
 npm ci
 npm run build
 npm start
 ```
 
-`npm start` 使用项目内的 Electron，不要求系统全局安装 Electron。运行时仍然需要本机 Node 与 DSH 引擎。
+`npm start` 使用项目内的 Electron，不要求系统全局安装 Electron。运行时仍然需要本机 Node 与 DSH 引擎；脚本与手动命令的差异见 [一键部署](一键部署.md)。
 
 开发模式：
 

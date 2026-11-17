@@ -1,31 +1,17 @@
-import type { ModuleDefinition, SlotId } from './types';
+/**
+ * 本地扩展入口。
+ *
+ * 该文件只做转发：真正的装配取决于构建模式。
+ * - 公开构建（`npm run build` / `npm run dev`）：解析到 `local.public.ts`，没有外部模块；
+ * - 本机扩展（`npm run build:local` / `npm run dev:local`）：解析到 `local.host.ts`，
+ *   读取被 .gitignore 忽略的 `src/modules/local-modules/`。
+ *
+ * 解析由 `tsconfig.json` 的 paths（类型检查）与 `vite.config.ts` 的 alias（打包）共同完成。
+ */
+export { localModules, localModuleDefaults, localTemplateExtras } from '#local-modules';
 
 /**
- * 本地扩展模块：只在本机存在，不进公共仓库与公开发布包。
- * 把扩展的 .tsx 放进 `src/modules/local-modules/`，导出 `definition` 即可被自动注册；
- * 同目录的 config.ts 可补充默认装配与模板模块。目录本身被 .gitignore 忽略。
+ * 当前构建是否包含外部扩展；设置里的体检和模块来源标识会用到。
+ * 值由 vite.config.ts 按别名选择结果注入，避免 mode 与环境变量两种入口判断不一致。
  */
-type LocalModuleFile = { definition?: ModuleDefinition };
-
-type LocalConfig = {
-  defaults?: Record<
-    string,
-    { enabled: boolean; order: number; slotOrders?: Partial<Record<SlotId, number>> }
-  >;
-  templateExtras?: Record<string, string[]>;
-};
-
-const moduleFiles = import.meta.glob<LocalModuleFile>('./local-modules/*.tsx', { eager: true });
-const configFiles = import.meta.glob<{ default?: LocalConfig } & LocalConfig>(
-  './local-modules/config.ts',
-  { eager: true },
-);
-
-export const localModules: ModuleDefinition[] = Object.values(moduleFiles)
-  .map((file) => file.definition)
-  .filter((definition): definition is ModuleDefinition => Boolean(definition));
-
-const localConfig = Object.values(configFiles)[0] ?? {};
-
-export const localModuleDefaults = localConfig.defaults ?? {};
-export const localTemplateExtras = localConfig.templateExtras ?? {};
+export const localExtensionsEnabled = __LOCAL_EXTENSIONS__;

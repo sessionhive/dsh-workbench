@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type Dispatch,
   type SetStateAction,
 } from 'react';
@@ -25,7 +26,7 @@ import {
 import { ModuleBoundary } from '../modules/ModuleHost';
 import { ModuleStateProvider } from '../modules/state';
 import { isRemovedModule } from '../moduleDefaults';
-import type { WorkbenchSettings } from '../settings';
+import { themeBackground, type WorkbenchSettings, type ThemeDefinition } from '../settings';
 import {
   disposeTerminalInstance,
   terminalInstanceKey,
@@ -33,12 +34,15 @@ import {
 import type { Session } from '../types';
 import { BoxSettingsPanel } from './BoxSettingsPanel';
 import { Icon } from './icons';
+import { ThemeBackdrop } from './ThemeBackdrop';
 
 interface SceneDesktopProps {
   session: Session;
   sessions: Session[];
   actions: ModuleActions;
   settings: WorkbenchSettings;
+  /** 当前主题：会话桌面与中枢台共用同一套背景素材。 */
+  theme: ThemeDefinition;
   engine: EngineSnapshot | null;
   engineLoading: boolean;
   engineProcess?: EngineProcessInfo | null;
@@ -273,6 +277,7 @@ export function SceneDesktop({
   sessions,
   actions,
   settings,
+  theme,
   engine,
   engineLoading,
   engineProcess,
@@ -286,6 +291,11 @@ export function SceneDesktop({
   onModuleStateChange,
 }: SceneDesktopProps) {
   const activity = useEngineActivity();
+  /**
+   * 桌面底色与中枢台共用同一份主题背景：渐变、光晕、风格都由 themeBackground 算出来，
+   * 否则会话桌面只剩一块纯色，切主题看不出差别。
+   */
+  const boardBackground = useMemo(() => themeBackground(theme), [theme]);
   const sceneSort = useLongPressSort({
     ids: sessions.filter((item) => item.id !== 'hub').map((item) => item.id),
     onReorder: (ids) => {
@@ -454,6 +464,16 @@ export function SceneDesktop({
     [enabledModuleIds],
   );
   const visibleTiles = useMemo(() => tiles.filter(isTileVisible), [isTileVisible, tiles]);
+  // 未注册模块（通常是公开构建里的本机扩展盒子）留在存档中，但不计入界面统计。
+  const hiddenTiles = useMemo(
+    () =>
+      tiles.filter(
+        (tile) =>
+          (tile.kind !== 'module' || Boolean(getModuleDefinition(tile.moduleId))) &&
+          !isTileVisible(tile),
+      ),
+    [isTileVisible, tiles],
+  );
 
   useEffect(() => {
     const latest = latestRef.current;
@@ -843,7 +863,17 @@ export function SceneDesktop({
   const activeInShelf = shelfScenes.some((item) => item.id === session.id);
 
   return (
-    <div className="board-desktop" role="dialog" aria-label="会话桌面">
+    <div
+      className="board-desktop"
+      role="dialog"
+      aria-label="会话桌面"
+      style={{ '--board-bg': boardBackground } as CSSProperties}
+    >
+      <ThemeBackdrop
+        theme={theme}
+        motion={settings.appearance.motion}
+        className="board-theme-backdrop"
+      />
       <header className="board-bar">
         <div className="board-scene-tabs" role="tablist" aria-label="会话" ref={tabStripRef}>
           {[...(hubScene ? [hubScene] : []), ...sceneTabs].map((item) => {
@@ -1107,9 +1137,7 @@ export function SceneDesktop({
         <span>
           <b>{visibleTiles.length}</b> 个盒子 · 12 列网格
         </span>
-        {tiles.length > visibleTiles.length && (
-          <span>{tiles.length - visibleTiles.length} 个已移除</span>
-        )}
+        {hiddenTiles.length > 0 && <span>{hiddenTiles.length} 个已移除</span>}
         <span>会话：{session.name}</span>
         <span className="board-save-hint">Ctrl+S 保存</span>
         <span className={`board-save-state${dirty ? ' dirty' : ''}`}>

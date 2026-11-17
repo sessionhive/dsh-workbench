@@ -8,10 +8,32 @@
   flex-direction: column;
   overflow: hidden;
   color: var(--text);
-  background:
-    radial-gradient(900px 620px at 16% -6%, rgba(var(--accent-rgb), 0.1), transparent 70%),
-    radial-gradient(760px 540px at 92% 108%, rgba(var(--accent-rgb), 0.06), transparent 72%),
-    var(--bg-0);
+  /* 底色由 SceneDesktop 用 themeBackground() 算好写进 --board-bg，与中枢台同一份渐变。 */
+  background: var(--board-bg, var(--bg-0));
+}
+
+/*
+ * 纹理层：与中枢台 .app::before 共用 styles.css 里的 data-texture 规则，
+ * 只在主题带明确纹理（星空 / 点阵 / 扫描线 / 方格）时显示；
+ * faint 与 none 交给 .board-canvas 自己的行列网格，避免两层网格打架。
+ */
+.board-desktop::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  display: none;
+  pointer-events: none;
+}
+
+/*
+ * 主题素材层：会话桌面在中枢台之外单独铺一层，图片/视频与中枢台保持一致。
+ * 负层级位于皮肤底色之上、标签栏与盒子之下；没有素材时组件直接不渲染。
+ */
+.board-desktop > .board-theme-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
 }
 
 .board-bar {
